@@ -1,0 +1,35 @@
+# West manifest for UWB Tag Firmware
+#
+# Pins the nRF Connect SDK (NCS) at a specific release so that every
+# developer and CI runner gets an identical Zephyr + toolchain tree.
+#
+# Pinned NCS version: v2.7.0
+#
+# Workspace setup (one-time, run from a parent directory):
+#
+#   west init -l uwb_tag_firmware      # if this repo is already cloned
+#   west update                        # fetches NCS, Zephyr, modules, …
+#
+# Or, to initialise a fresh workspace:
+#
+#   west init --mr v2.7.0 <workspace>
+#   cd <workspace>
+#   git clone https://github.com/madfog64/FUNDAMENTALS_UWB_FIRMWARE uwb_tag_firmware
+#   west update
+#
+# After west update, build with:
+#   west build -b nrf52dk_nrf52832 uwb_tag_firmware
+
+manifest:
+  remotes:
+    - name: ncs
+      url-base: https://github.com/nrfconnect
+
+  projects:
+    - name: nrf
+      remote: ncs
+      revision: v2.7.0
+      import: true        # pulls in NCS's own manifest (Zephyr, mcuboot, modules, …)
+
+  self:
+    path: uwb_tag_firmware

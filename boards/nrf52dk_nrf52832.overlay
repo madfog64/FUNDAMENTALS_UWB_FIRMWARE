@@ -1,0 +1,65 @@
+/*
+ * DWM1001 module overlay for the nrf52dk_nrf52832 board target.
+ *
+ * The DWM1001 module integrates a Nordic nRF52832 and a Decawave DW1000
+ * UWB transceiver on a single PCB.  The DW1000 is connected to the nRF52832
+ * via SPI1 with the pin mapping below, confirmed from the Decawave DWM1001
+ * module schematic and the reference nRF5-SDK firmware (dw1001_dev.h).
+ *
+ * Pin mapping (nRF52832 port 0):
+ *   SPI1 SCK   P0.16
+ *   SPI1 MOSI  P0.20
+ *   SPI1 MISO  P0.18
+ *   SPI1 CS    P0.17  (software CS, active-low)
+ *   DW1000 IRQ P0.19
+ *   DW1000 RST P0.24
+ *
+ * NOTE: The dw1000 device node and its compatible binding are added in
+ * UWB-91 when deca_driver is ported to Zephyr SPI.  The pinctrl and SPI1
+ * configuration here is a placeholder to lock in the pin assignments and
+ * ensure the overlay compiles cleanly with the skeleton application.
+ *
+ * NCS version: v2.7.0 (Zephyr 3.6.x)
+ * Uses pinctrl-based pin assignment required by NCS >= v2.1.
+ */
+
+&pinctrl {
+	spi1_default: spi1_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK,  0, 16)>,
+				<NRF_PSEL(SPIM_MOSI, 0, 20)>,
+				<NRF_PSEL(SPIM_MISO, 0, 18)>;
+		};
+	};
+
+	spi1_sleep: spi1_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK,  0, 16)>,
+				<NRF_PSEL(SPIM_MOSI, 0, 20)>,
+				<NRF_PSEL(SPIM_MISO, 0, 18)>;
+			low-power-enable;
+		};
+	};
+};
+
+&spi1 {
+	compatible = "nordic,nrf-spim";
+	status = "okay";
+	pinctrl-0 = <&spi1_default>;
+	pinctrl-1 = <&spi1_sleep>;
+	pinctrl-names = "default", "sleep";
+	cs-gpios = <&gpio0 17 GPIO_ACTIVE_LOW>;
+
+	/*
+	 * dw1000@0 node is added here in UWB-91.
+	 * Example stub (do not uncomment — compatible binding does not exist yet):
+	 *
+	 * dw1000: dw1000@0 {
+	 *     compatible = "decawave,dw1000";
+	 *     reg = <0>;
+	 *     spi-max-frequency = <DT_FREQ_M(8)>;
+	 *     irq-gpios  = <&gpio0 19 GPIO_ACTIVE_HIGH>;
+	 *     reset-gpios = <&gpio0 24 GPIO_ACTIVE_LOW>;
+	 * };
+	 */
+};

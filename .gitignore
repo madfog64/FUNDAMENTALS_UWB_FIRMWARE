@@ -1,0 +1,22 @@
+# West workspace directories (created by `west update`)
+# The manifest repo (this repo) lives inside the workspace but only tracks
+# its own files — everything else is fetched by west.
+/build/
+/.west/
+
+# CMake build artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.ninja
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Python
+__pycache__/
+*.pyc
