@@ -27,6 +27,7 @@ manifest:
 
   projects:
     - name: nrf
+      repo-path: sdk-nrf  # NCS lives at github.com/nrfconnect/sdk-nrf (not /nrf)
       remote: ncs
       revision: v2.7.0
       import: true        # pulls in NCS's own manifest (Zephyr, mcuboot, modules, …)
