@@ -1,0 +1,101 @@
+# Firmware Build CI
+#
+# Builds the UWB tag firmware headlessly using the official Nordic NCS toolchain
+# Docker image pinned to v2.7.0 — the same NCS version pinned in west.yml.
+# Using the container sidesteps host-runner libc/toolchain incompatibilities
+# (e.g. the libunistring.so.2 issue on stock Ubuntu 22.04).
+#
+# Workspace layout (inside the runner):
+#
+#   $GITHUB_WORKSPACE/
+#     .west/                ← created by `west init -l uwb_tag_firmware`
+#     uwb_tag_firmware/     ← this repo (checked out by actions/checkout)
+#     nrf/                  ← NCS SDK           } downloaded by `west update`;
+#     zephyr/               ← Zephyr RTOS        } cached by the west-cache step
+#     modules/              ← Zephyr modules     } to avoid re-downloading on
+#     bootloader/           ← MCUboot etc.       } every run
+#
+# Triggers: pull_request (any branch) and push to main.
+# Out of scope: hardware-in-the-loop testing, ztest/twister (added in UWB-94).
+
+name: Firmware Build CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  # Cancel in-progress runs for the same ref to save Actions minutes.
+  group: firmware-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  west-build:
+    name: west build (nrf52dk_nrf52832 / NCS v2.7.0)
+    runs-on: ubuntu-22.04
+
+    # Official Nordic NCS toolchain image for v2.7.0.
+    # Contains: arm-zephyr-eabi cross-compiler (Zephyr SDK 0.16.4), west,
+    # cmake, ninja, and all NCS Python dependencies.
+    # NCS SDK sources are NOT bundled — fetched below by `west update`.
+    container:
+      image: ghcr.io/nrfconnect/sdk-nrf-toolchain:v2.7.0
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout this repo into a named subdirectory so `west init -l` can
+      #    treat the GITHUB_WORKSPACE root as the west workspace root.
+      # -----------------------------------------------------------------------
+      - name: Checkout firmware source
+        uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938  # v4.2.0
+        with:
+          path: uwb_tag_firmware
+
+      # -----------------------------------------------------------------------
+      # 2. Cache the downloaded NCS modules (nrf, zephyr, modules, bootloader).
+      #    Cache key includes the west.yml hash so any manifest change
+      #    (e.g. bumping NCS revision) busts the cache and re-fetches cleanly.
+      #    The `.west/` config directory is intentionally NOT cached — it is
+      #    tiny and is recreated in seconds by `west init -l`.
+      # -----------------------------------------------------------------------
+      - name: Cache NCS west modules
+        id: west-cache
+        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a  # v4.1.1
+        with:
+          path: |
+            bootloader
+            modules
+            nrf
+            zephyr
+          key: west-ncs-v2.7.0-${{ hashFiles('uwb_tag_firmware/west.yml') }}
+
+      # -----------------------------------------------------------------------
+      # 3. Initialise the west workspace (always — fast, just writes .west/config).
+      #    Points west at the manifest in uwb_tag_firmware/west.yml.
+      # -----------------------------------------------------------------------
+      - name: Initialise west workspace
+        run: west init -l uwb_tag_firmware
+
+      # -----------------------------------------------------------------------
+      # 4. Fetch NCS projects (only when the cache is cold).
+      #    -o=--depth=1 passes --depth=1 to each `git clone`, making all
+      #    project clones shallow to minimise download size.
+      #    --narrow is intentionally omitted so imported projects (Zephyr,
+      #    mcuboot, modules) are also fetched — they are required by the build.
+      # -----------------------------------------------------------------------
+      - name: Fetch NCS modules (west update)
+        if: steps.west-cache.outputs.cache-hit != 'true'
+        run: west update -o=--depth=1
+
+      # -----------------------------------------------------------------------
+      # 5. Build.  Fail the job on any compile or link error.
+      #    Build artefacts land in $GITHUB_WORKSPACE/build/ (not cached —
+      #    west build --pristine=always is the default on a fresh workspace).
+      # -----------------------------------------------------------------------
+      - name: Build firmware
+        run: west build -b nrf52dk_nrf52832 uwb_tag_firmware
