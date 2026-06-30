@@ -35,7 +35,7 @@
  *
  * Hardware: DWM1001 module (nRF52832 + DW1000), SPI1.
  * Board overlay: boards/nrf52dk_nrf52832.overlay
- * Binding:       dts/bindings/decawave,dw1000.yaml
+ * Binding:       zephyr/dts/bindings/ieee802154/decawave,dw1000.yaml (upstream)
  * NCS version:   v2.7.0 (Zephyr 3.6.x)
  *
  * @attention
@@ -108,8 +108,9 @@ static const struct spi_dt_spec *g_spi;
 /* ---------------------------------------------------------------------------
  * GPIO specs
  * --------------------------------------------------------------------------- */
+/* The upstream binding names the IRQ pin "int-gpios" (not "irq-gpios"). */
 static const struct gpio_dt_spec dw1000_irq =
-    GPIO_DT_SPEC_GET(DW1000_NODE, irq_gpios);
+    GPIO_DT_SPEC_GET(DW1000_NODE, int_gpios);
 
 static const struct gpio_dt_spec dw1000_reset =
     GPIO_DT_SPEC_GET(DW1000_NODE, reset_gpios);

@@ -14,10 +14,11 @@
  *   DW1000 IRQ P0.19  (active-high: DW1000 asserts high on event)
  *   DW1000 RST P0.24  (active-low open-drain: drive low to reset, then release)
  *
- * The DW1000 SPI device node uses the custom binding declared in
- * dts/bindings/decawave,dw1000.yaml (UWB-93).  The port layer in
- * drivers/dw1000/port/deca_port.c consumes it via SPI_DT_SPEC_GET and
- * GPIO_DT_SPEC_GET.
+ * The DW1000 SPI device node uses the upstream Zephyr binding at
+ * zephyr/dts/bindings/ieee802154/decawave,dw1000.yaml (compatible =
+ * "decawave,dw1000", on-bus: spi).  The IRQ property name in that binding is
+ * "int-gpios".  The port layer in drivers/dw1000/port/deca_port.c consumes it
+ * via SPI_DT_SPEC_GET and GPIO_DT_SPEC_GET.
  *
  * NCS version: v2.7.0 (Zephyr 3.6.x)
  * Uses pinctrl-based pin assignment required by NCS >= v2.1.
@@ -64,7 +65,7 @@
 		compatible = "decawave,dw1000";
 		reg = <0>;
 		spi-max-frequency = <8000000>;    /* 8 MHz fast rate */
-		irq-gpios   = <&gpio0 19 GPIO_ACTIVE_HIGH>;
+		int-gpios   = <&gpio0 19 GPIO_ACTIVE_HIGH>;
 		reset-gpios = <&gpio0 24 GPIO_ACTIVE_LOW>;
 	};
 };
