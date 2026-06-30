@@ -114,10 +114,11 @@ jobs:
         uses: zephyrproject-rtos/action-zephyr-setup@5ec39f5cba83346d83a836dfed1524270c660e28  # v1.0.14
         with:
           app-path: uwb_tag_firmware
-          # unit_testing uses the host GCC; the arm cross-compiler is not needed.
-          # Specify the x86_64 host toolchain so the action still registers a
-          # Zephyr SDK (needed by west twister for CMake toolchain files).
-          toolchains: x86_64-zephyr-elf
+          # unit_testing uses the host GCC (/usr/bin/gcc), not a Zephyr SDK
+          # cross-compiler.  We still download arm-zephyr-eabi so the action
+          # registers the Zephyr SDK (needed by west twister for CMake modules).
+          # On warm runs this hits the GitHub cache from the west-build job.
+          toolchains: arm-zephyr-eabi
 
       # -----------------------------------------------------------------------
       # Install twister's Python dependencies.
