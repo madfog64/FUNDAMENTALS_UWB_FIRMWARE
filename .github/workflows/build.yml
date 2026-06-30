@@ -1,19 +1,25 @@
 # Firmware Build CI
 #
-# Builds the UWB tag firmware headlessly using the official Nordic NCS toolchain
-# Docker image pinned to v2.7.0 — the same NCS version pinned in west.yml.
-# Using the container sidesteps host-runner libc/toolchain incompatibilities
-# (e.g. the libunistring.so.2 issue on stock Ubuntu 22.04).
+# Builds the UWB tag firmware on ubuntu-22.04 using the official
+# zephyrproject-rtos/action-zephyr-setup action, which installs west,
+# fetches NCS v2.7.0 via `west update`, auto-detects the required Zephyr
+# SDK version from zephyr/SDK_VERSION (0.16.5-1 for NCS v2.7.0), downloads
+# the matching arm-zephyr-eabi cross-compiler, and sets up ccache.
 #
-# Workspace layout (inside the runner):
+# Why not the ghcr.io/nrfconnect/sdk-nrf-toolchain:v2.7.0 container?
+# GitHub Actions bypasses that image's entrypoint when executing each step
+# script, so the pre-installed toolchain bundle never lands on PATH.
+# nrfutil-toolchain-manager (the mechanism to activate it) is a local
+# dev-box install, not present in the image itself.  A plain ubuntu runner +
+# this action is the conventional, supported NCS/Zephyr CI pattern.
 #
-#   $GITHUB_WORKSPACE/
-#     .west/                ← created by `west init -l uwb_tag_firmware`
-#     uwb_tag_firmware/     ← this repo (checked out by actions/checkout)
-#     nrf/                  ← NCS SDK           } downloaded by `west update`;
-#     zephyr/               ← Zephyr RTOS        } cached by the west-cache step
-#     modules/              ← Zephyr modules     } to avoid re-downloading on
-#     bootloader/           ← MCUboot etc.       } every run
+# Workspace layout (GITHUB_WORKSPACE):
+#   uwb_tag_firmware/     <- this repo, checked out by actions/checkout
+#   .west/                <- created by the action (west init -l uwb_tag_firmware)
+#   nrf/                  <- NCS SDK           \
+#   zephyr/               <- Zephyr RTOS        > fetched by west update
+#   modules/              <- Zephyr modules     |
+#   bootloader/           <- MCUboot etc.      /
 #
 # Triggers: pull_request (any branch) and push to main.
 # Out of scope: hardware-in-the-loop testing, ztest/twister (added in UWB-94).
@@ -39,25 +45,9 @@ jobs:
     name: west build (nrf52dk_nrf52832 / NCS v2.7.0)
     runs-on: ubuntu-22.04
 
-    # Official Nordic NCS toolchain image for v2.7.0.
-    # Contains: arm-zephyr-eabi cross-compiler (Zephyr SDK 0.16.4), west,
-    # cmake, ninja, and all NCS Python dependencies.
-    # NCS SDK sources are NOT bundled — fetched below by `west update`.
-    container:
-      image: ghcr.io/nrfconnect/sdk-nrf-toolchain:v2.7.0
-
-    # GitHub Actions bypasses the image's entrypoint when running each step's
-    # script, so west/cmake/ninja are NOT on PATH by default.  nrfutil itself
-    # IS on PATH inside the container; wrapping every `run:` step with
-    # `nrfutil toolchain-manager launch` re-activates the v2.7.0 toolchain
-    # environment before the step script executes.
-    defaults:
-      run:
-        shell: nrfutil toolchain-manager launch --ncs-version v2.7.0 -- bash -euo pipefail {0}
-
     steps:
       # -----------------------------------------------------------------------
-      # 1. Checkout this repo into a named subdirectory so `west init -l` can
+      # 1. Checkout this repo into a named subdirectory so west init -l can
       #    treat the GITHUB_WORKSPACE root as the west workspace root.
       # -----------------------------------------------------------------------
       - name: Checkout firmware source
@@ -66,45 +56,28 @@ jobs:
           path: uwb_tag_firmware
 
       # -----------------------------------------------------------------------
-      # 2. Cache the downloaded NCS modules (nrf, zephyr, modules, bootloader).
-      #    Cache key includes the west.yml hash so any manifest change
-      #    (e.g. bumping NCS revision) busts the cache and re-fetches cleanly.
-      #    The `.west/` config directory is intentionally NOT cached — it is
-      #    tiny and is recreated in seconds by `west init -l`.
+      # 2. Set up the west workspace and Zephyr SDK.
+      #    This action:
+      #      - installs west (pip) and apt build deps (ccache, gperf, etc.)
+      #      - runs: west init -l uwb_tag_firmware && west update -o=--depth=1
+      #      - auto-detects SDK version from zephyr/SDK_VERSION (-> 0.16.5-1)
+      #      - downloads the matching Zephyr SDK minimal bundle and registers
+      #        the arm-zephyr-eabi cross-compiler
+      #      - installs NCS Python requirements (west packages pip / requirements.txt)
+      #      - enables ccache (caches compiled objects between runs)
+      #    The Zephyr SDK binary and ccache are restored/saved automatically.
+      #    NCS source clones (nrf, zephyr, modules, bootloader) are re-fetched
+      #    shallow (--depth=1) on a cold run; warm runs benefit from ccache.
       # -----------------------------------------------------------------------
-      - name: Cache NCS west modules
-        id: west-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+      - name: Set up Zephyr project (west + NCS + Zephyr SDK)
+        uses: zephyrproject-rtos/action-zephyr-setup@5ec39f5cba83346d83a836dfed1524270c660e28  # v1.0.14
         with:
-          path: |
-            bootloader
-            modules
-            nrf
-            zephyr
-          key: west-ncs-v2.7.0-${{ hashFiles('uwb_tag_firmware/west.yml') }}
+          app-path: uwb_tag_firmware
+          toolchains: arm-zephyr-eabi
 
       # -----------------------------------------------------------------------
-      # 3. Initialise the west workspace (always — fast, just writes .west/config).
-      #    Points west at the manifest in uwb_tag_firmware/west.yml.
-      # -----------------------------------------------------------------------
-      - name: Initialise west workspace
-        run: west init -l uwb_tag_firmware
-
-      # -----------------------------------------------------------------------
-      # 4. Fetch NCS projects (only when the cache is cold).
-      #    -o=--depth=1 passes --depth=1 to each `git clone`, making all
-      #    project clones shallow to minimise download size.
-      #    --narrow is intentionally omitted so imported projects (Zephyr,
-      #    mcuboot, modules) are also fetched — they are required by the build.
-      # -----------------------------------------------------------------------
-      - name: Fetch NCS modules (west update)
-        if: steps.west-cache.outputs.cache-hit != 'true'
-        run: west update -o=--depth=1
-
-      # -----------------------------------------------------------------------
-      # 5. Build.  Fail the job on any compile or link error.
-      #    Build artefacts land in $GITHUB_WORKSPACE/build/ (not cached —
-      #    west build --pristine=always is the default on a fresh workspace).
+      # 3. Build.  Fails the job on any compile or link error.
+      #    Build artefacts land in GITHUB_WORKSPACE/build/.
       # -----------------------------------------------------------------------
       - name: Build firmware
         run: west build -b nrf52dk_nrf52832 uwb_tag_firmware
