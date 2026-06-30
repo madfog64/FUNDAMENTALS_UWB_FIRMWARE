@@ -1,10 +1,18 @@
 # Firmware Build CI
 #
-# Builds the UWB tag firmware on ubuntu-22.04 using the official
-# zephyrproject-rtos/action-zephyr-setup action, which installs west,
-# fetches NCS v2.7.0 via `west update`, auto-detects the required Zephyr
-# SDK version from zephyr/SDK_VERSION (0.16.5-1 for NCS v2.7.0), downloads
-# the matching arm-zephyr-eabi cross-compiler, and sets up ccache.
+# Two jobs:
+#
+#   west-build  — cross-compiles for nrf52dk_nrf52832 (arm-zephyr-eabi).
+#                 Fails on any compile or link error.
+#
+#   twister     — runs host-side ztests on the 'unit_testing' platform.
+#                 Added in UWB-94: mocked-SPI DW1000 device-ID suite.
+#                 Fails if any test assertion fails (non-zero twister exit).
+#
+# Both jobs use the same zephyrproject-rtos/action-zephyr-setup action,
+# which installs west, fetches NCS v2.7.0, auto-detects the Zephyr SDK
+# (0.16.5-1), downloads the arm-zephyr-eabi cross-compiler, installs NCS
+# Python requirements, and enables ccache.
 #
 # Why not the ghcr.io/nrfconnect/sdk-nrf-toolchain:v2.7.0 container?
 # GitHub Actions bypasses that image's entrypoint when executing each step
@@ -22,7 +30,6 @@
 #   bootloader/           <- MCUboot etc.      /
 #
 # Triggers: pull_request (any branch) and push to main.
-# Out of scope: hardware-in-the-loop testing, ztest/twister (added in UWB-94).
 
 name: Firmware Build CI
 
@@ -81,3 +88,69 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Build firmware
         run: west build -b nrf52dk_nrf52832 uwb_tag_firmware
+
+  # ---------------------------------------------------------------------------
+  # Job: twister — host-side ztest execution (unit_testing platform, UWB-94)
+  #
+  # Compiles and runs tests/dw1000_devid/ as a native Linux executable.
+  # The 'unit_testing' platform has no Zephyr kernel — it links only the
+  # ztest framework and the sources listed in the test's CMakeLists.txt.
+  # A mocked readfromspi() returns the DEV_ID bytes; the suite asserts the
+  # SPI header framing and the decoded value 0xDECA0130.
+  #
+  # twister exits non-zero if any test assertion fails, making CI go red.
+  # ---------------------------------------------------------------------------
+  twister:
+    name: west twister (unit_testing / dw1000_devid suite)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout firmware source
+        uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938  # v4.2.0
+        with:
+          path: uwb_tag_firmware
+
+      - name: Set up Zephyr project (west + NCS + Zephyr SDK)
+        uses: zephyrproject-rtos/action-zephyr-setup@5ec39f5cba83346d83a836dfed1524270c660e28  # v1.0.14
+        with:
+          app-path: uwb_tag_firmware
+          # unit_testing uses the host GCC; the arm cross-compiler is not needed.
+          # Specify the x86_64 host toolchain so the action still registers a
+          # Zephyr SDK (needed by west twister for CMake toolchain files).
+          toolchains: x86_64-zephyr-elf
+
+      # -----------------------------------------------------------------------
+      # Install twister's Python dependencies.
+      # The action already installs west's own requirements; these extras cover
+      # pyelftools (ELF parsing) and anytree (test-suite tree building) that
+      # twister uses when parsing results.
+      # -----------------------------------------------------------------------
+      - name: Install twister Python dependencies
+        run: pip install pyelftools anytree
+
+      # -----------------------------------------------------------------------
+      # Run twister on the dw1000_devid test suite.
+      #
+      # Flags:
+      #   -p unit_testing    — target platform (native host, no emulation)
+      #   -T <dir>           — test directory to scan for testcase.yaml
+      #   -v                 — verbose output (test names + PASS/FAIL per case)
+      #   --no-clean         — keep twister-out/ for potential artifact upload
+      #
+      # Exit code: non-zero if any test fails → CI step fails → PR goes red.
+      # -----------------------------------------------------------------------
+      - name: Run dw1000_devid ztest (twister)
+        run: >
+          west twister
+          -p unit_testing
+          -T uwb_tag_firmware/tests/dw1000_devid
+          -v
+          --no-clean
+
+      # Upload twister results for diagnosis even on failure.
+      - name: Upload twister results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twister-results
+          path: twister-out/

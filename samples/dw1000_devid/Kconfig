@@ -1,0 +1,10 @@
+# samples/dw1000_devid/Kconfig
+#
+# Kconfig root for the dw1000_devid sample.
+#
+# Zephyr's build system uses APPLICATION_SOURCE_DIR/Kconfig as the Kconfig root
+# when it exists.  Because samples live outside the repo root, they need their
+# own Kconfig to source the DW1000 driver config at the correct relative path.
+
+source "$(ZEPHYR_BASE)/Kconfig"
+source "$(APPLICATION_SOURCE_DIR)/../../drivers/dw1000/Kconfig"

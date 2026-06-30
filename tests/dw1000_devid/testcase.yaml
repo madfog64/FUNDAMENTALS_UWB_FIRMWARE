@@ -1,0 +1,10 @@
+tests:
+  # Twister test identifier: <suite>.<name>
+  # Runs on the 'unit_testing' platform (native-hosted, no Zephyr kernel).
+  # CI invocation: west twister -p unit_testing -T tests/dw1000_devid -v
+  dw1000.devid:
+    platform_allow:
+      - unit_testing
+    tags: dw1000 devid bringup
+    integration_platforms:
+      - unit_testing
