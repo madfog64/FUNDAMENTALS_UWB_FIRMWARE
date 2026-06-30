@@ -46,6 +46,15 @@ jobs:
     container:
       image: ghcr.io/nrfconnect/sdk-nrf-toolchain:v2.7.0
 
+    # GitHub Actions bypasses the image's entrypoint when running each step's
+    # script, so west/cmake/ninja are NOT on PATH by default.  nrfutil itself
+    # IS on PATH inside the container; wrapping every `run:` step with
+    # `nrfutil toolchain-manager launch` re-activates the v2.7.0 toolchain
+    # environment before the step script executes.
+    defaults:
+      run:
+        shell: nrfutil toolchain-manager launch --ncs-version v2.7.0 -- bash -euo pipefail {0}
+
     steps:
       # -----------------------------------------------------------------------
       # 1. Checkout this repo into a named subdirectory so `west init -l` can
