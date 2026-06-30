@@ -1,0 +1,83 @@
+# Firmware Build CI
+#
+# Builds the UWB tag firmware on ubuntu-22.04 using the official
+# zephyrproject-rtos/action-zephyr-setup action, which installs west,
+# fetches NCS v2.7.0 via `west update`, auto-detects the required Zephyr
+# SDK version from zephyr/SDK_VERSION (0.16.5-1 for NCS v2.7.0), downloads
+# the matching arm-zephyr-eabi cross-compiler, and sets up ccache.
+#
+# Why not the ghcr.io/nrfconnect/sdk-nrf-toolchain:v2.7.0 container?
+# GitHub Actions bypasses that image's entrypoint when executing each step
+# script, so the pre-installed toolchain bundle never lands on PATH.
+# nrfutil-toolchain-manager (the mechanism to activate it) is a local
+# dev-box install, not present in the image itself.  A plain ubuntu runner +
+# this action is the conventional, supported NCS/Zephyr CI pattern.
+#
+# Workspace layout (GITHUB_WORKSPACE):
+#   uwb_tag_firmware/     <- this repo, checked out by actions/checkout
+#   .west/                <- created by the action (west init -l uwb_tag_firmware)
+#   nrf/                  <- NCS SDK           \
+#   zephyr/               <- Zephyr RTOS        > fetched by west update
+#   modules/              <- Zephyr modules     |
+#   bootloader/           <- MCUboot etc.      /
+#
+# Triggers: pull_request (any branch) and push to main.
+# Out of scope: hardware-in-the-loop testing, ztest/twister (added in UWB-94).
+
+name: Firmware Build CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  # Cancel in-progress runs for the same ref to save Actions minutes.
+  group: firmware-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  west-build:
+    name: west build (nrf52dk_nrf52832 / NCS v2.7.0)
+    runs-on: ubuntu-22.04
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout this repo into a named subdirectory so west init -l can
+      #    treat the GITHUB_WORKSPACE root as the west workspace root.
+      # -----------------------------------------------------------------------
+      - name: Checkout firmware source
+        uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938  # v4.2.0
+        with:
+          path: uwb_tag_firmware
+
+      # -----------------------------------------------------------------------
+      # 2. Set up the west workspace and Zephyr SDK.
+      #    This action:
+      #      - installs west (pip) and apt build deps (ccache, gperf, etc.)
+      #      - runs: west init -l uwb_tag_firmware && west update -o=--depth=1
+      #      - auto-detects SDK version from zephyr/SDK_VERSION (-> 0.16.5-1)
+      #      - downloads the matching Zephyr SDK minimal bundle and registers
+      #        the arm-zephyr-eabi cross-compiler
+      #      - installs NCS Python requirements (west packages pip / requirements.txt)
+      #      - enables ccache (caches compiled objects between runs)
+      #    The Zephyr SDK binary and ccache are restored/saved automatically.
+      #    NCS source clones (nrf, zephyr, modules, bootloader) are re-fetched
+      #    shallow (--depth=1) on a cold run; warm runs benefit from ccache.
+      # -----------------------------------------------------------------------
+      - name: Set up Zephyr project (west + NCS + Zephyr SDK)
+        uses: zephyrproject-rtos/action-zephyr-setup@5ec39f5cba83346d83a836dfed1524270c660e28  # v1.0.14
+        with:
+          app-path: uwb_tag_firmware
+          toolchains: arm-zephyr-eabi
+
+      # -----------------------------------------------------------------------
+      # 3. Build.  Fails the job on any compile or link error.
+      #    Build artefacts land in GITHUB_WORKSPACE/build/.
+      # -----------------------------------------------------------------------
+      - name: Build firmware
+        run: west build -b nrf52dk_nrf52832 uwb_tag_firmware
