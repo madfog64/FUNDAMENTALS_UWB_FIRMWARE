@@ -1,0 +1,14 @@
+# Application root Kconfig for uwb_tag_firmware.
+#
+# Zephyr's CMake module (cmake/modules/kconfig.cmake) automatically promotes
+# this file to KCONFIG_ROOT when it is present in APPLICATION_SOURCE_DIR,
+# replacing the default $(ZEPHYR_BASE)/Kconfig.  This file therefore MUST
+# source the Zephyr tree first so that all board/SoC/kernel symbols are still
+# defined.
+#
+# Application-specific symbols are sourced after the Zephyr tree.
+
+source "$(ZEPHYR_BASE)/Kconfig"
+
+# DW1000 UWB transceiver driver (vendored Decawave API)
+source "$(APPLICATION_SOURCE_DIR)/drivers/dw1000/Kconfig"

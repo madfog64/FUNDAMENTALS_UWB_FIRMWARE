@@ -1,0 +1,18 @@
+# Kconfig — Decawave DW1000 UWB transceiver driver
+#
+# Sourced from the application root Kconfig.
+
+config DW1000
+	bool "Decawave DW1000 UWB transceiver driver (vendored)"
+	help
+	  Enable the vendored Decawave DW1000 register/device API
+	  (deca_device.c + deca_params_init.c).
+
+	  The SPI port functions (writetospi, readfromspi), interrupt mutex
+	  (decamutexon, decamutexoff), and millisecond delay (deca_sleep) are
+	  declared in deca_device_api.h and provided as __weak stubs in
+	  port/deca_port_stub.c until UWB-93 supplies the real Zephyr SPI
+	  integration.
+
+	  The old nRF5 SDK port/ layer from the reference firmware is NOT
+	  included; it is replaced by the Zephyr port under drivers/dw1000/port/.
