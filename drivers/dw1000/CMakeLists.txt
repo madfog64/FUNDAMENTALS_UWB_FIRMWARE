@@ -22,6 +22,17 @@ if(CONFIG_DW1000)
 
   zephyr_library()
 
+  # deca_port.c includes <zephyr/drivers/spi.h> which transitively pulls in
+  # <offsets.h> via the chain:
+  #   spi.h -> rtio.h -> app_memdomain.h -> linker-defs.h -> offsets.h
+  #
+  # offsets.h is generated during the build (target: offsets_h).  Without an
+  # explicit dependency, Ninja may start compiling deca_port.c in parallel
+  # with the offsets generation step, causing a missing-header error on
+  # pristine builds.  This add_dependencies call serialises the compile after
+  # offsets_h completes.
+  add_dependencies(${ZEPHYR_CURRENT_LIBRARY} offsets_h)
+
   zephyr_library_sources(
     deca_driver/deca_device.c
     deca_driver/deca_params_init.c
