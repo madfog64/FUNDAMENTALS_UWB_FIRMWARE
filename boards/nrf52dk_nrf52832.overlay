@@ -10,18 +10,27 @@
  *   SPI1 SCK   P0.16
  *   SPI1 MOSI  P0.20
  *   SPI1 MISO  P0.18
- *   SPI1 CS    P0.17  (software CS, active-low)
- *   DW1000 IRQ P0.19
- *   DW1000 RST P0.24
+ *   SPI1 CS    P0.17  (software-managed CS via cs-gpios, active-low)
+ *   DW1000 IRQ P0.19  (active-high: DW1000 asserts high on event)
+ *   DW1000 RST P0.24  (active-low open-drain: drive low to reset, then release)
  *
- * NOTE: The dw1000 device node and its compatible binding are added in
- * UWB-91 when deca_driver is ported to Zephyr SPI.  The pinctrl and SPI1
- * configuration here is a placeholder to lock in the pin assignments and
- * ensure the overlay compiles cleanly with the skeleton application.
+ * SPI driver choice: "nordic,nrf-spi" (non-DMA, interrupt-driven), NOT
+ * "nordic,nrf-spim".  The nRF52832 SPIM peripheral has Product Anomaly 58
+ * (PAN-58: an extra byte is clocked when RXD.MAXCNT=1 and TXD.MAXCNT<=1).
+ * Using the non-DMA SPI driver avoids PAN-58 entirely and matches how the
+ * official Decawave DWM1001 dev board configures SPI in the Zephyr tree.
+ *
+ * The DW1000 SPI device node uses the upstream Zephyr binding at
+ * zephyr/dts/bindings/ieee802154/decawave,dw1000.yaml (compatible =
+ * "decawave,dw1000", on-bus: spi).  The IRQ property name in that binding is
+ * "int-gpios".  The port layer in drivers/dw1000/port/deca_port.c consumes it
+ * via SPI_DT_SPEC_GET and GPIO_DT_SPEC_GET.
  *
  * NCS version: v2.7.0 (Zephyr 3.6.x)
  * Uses pinctrl-based pin assignment required by NCS >= v2.1.
  */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
 
 &pinctrl {
 	spi1_default: spi1_default {
@@ -43,7 +52,7 @@
 };
 
 &spi1 {
-	compatible = "nordic,nrf-spim";
+	compatible = "nordic,nrf-spi";
 	status = "okay";
 	pinctrl-0 = <&spi1_default>;
 	pinctrl-1 = <&spi1_sleep>;
@@ -51,15 +60,18 @@
 	cs-gpios = <&gpio0 17 GPIO_ACTIVE_LOW>;
 
 	/*
-	 * dw1000@0 node is added here in UWB-91.
-	 * Example stub (do not uncomment — compatible binding does not exist yet):
+	 * DW1000 UWB transceiver — SPI slave 0 (CS = gpio0.17).
 	 *
-	 * dw1000: dw1000@0 {
-	 *     compatible = "decawave,dw1000";
-	 *     reg = <0>;
-	 *     spi-max-frequency = <DT_FREQ_M(8)>;
-	 *     irq-gpios  = <&gpio0 19 GPIO_ACTIVE_HIGH>;
-	 *     reset-gpios = <&gpio0 24 GPIO_ACTIVE_LOW>;
-	 * };
+	 * spi-max-frequency is the fast operating frequency (8 MHz).
+	 * The port layer (port_set_dw1000_slowrate) overrides this to 2 MHz
+	 * before calling dwt_initialise(), then restores it via
+	 * port_set_dw1000_fastrate() after initialisation.
 	 */
+	dw1000: dw1000@0 {
+		compatible = "decawave,dw1000";
+		reg = <0>;
+		spi-max-frequency = <8000000>;    /* 8 MHz fast rate */
+		int-gpios   = <&gpio0 19 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio0 24 GPIO_ACTIVE_LOW>;
+	};
 };

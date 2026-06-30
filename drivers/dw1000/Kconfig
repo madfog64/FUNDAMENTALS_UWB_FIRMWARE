@@ -4,15 +4,25 @@
 
 config DW1000
 	bool "Decawave DW1000 UWB transceiver driver (vendored)"
+	select SPI
+	select GPIO
 	help
 	  Enable the vendored Decawave DW1000 register/device API
-	  (deca_device.c + deca_params_init.c).
+	  (deca_device.c + deca_params_init.c) together with the Zephyr SPI and
+	  GPIO port layer (deca_port.c, UWB-93).
+
+	  Automatically selects CONFIG_SPI (nRF SPIM driver) and CONFIG_GPIO
+	  (GPIO subsystem) so application code does not need to enable them
+	  explicitly.
+
+	  The port layer reads the DW1000 SPI device node from the devicetree
+	  using the label 'dw1000' (compatible = "decawave,dw1000") and obtains
+	  the SPI bus config, CS GPIO, IRQ GPIO, and RESET GPIO from DT properties.
 
 	  The SPI port functions (writetospi, readfromspi), interrupt mutex
-	  (decamutexon, decamutexoff), and millisecond delay (deca_sleep) are
-	  declared in deca_device_api.h and provided as __weak stubs in
-	  port/deca_port_stub.c until UWB-93 supplies the real Zephyr SPI
-	  integration.
+	  (decamutexon/decamutexoff), and millisecond delay (deca_sleep) are
+	  provided as strong definitions in port/deca_port.c; the __weak stubs in
+	  port/deca_port_stub.c are overridden at link time.
 
-	  The old nRF5 SDK port/ layer from the reference firmware is NOT
-	  included; it is replaced by the Zephyr port under drivers/dw1000/port/.
+	  Call dw1000_port_init() once during application start-up before using
+	  any deca_driver or port functions.
