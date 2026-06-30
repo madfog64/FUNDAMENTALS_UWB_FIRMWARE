@@ -6,8 +6,17 @@
 # Source layout:
 #   deca_driver/   Vendored Decawave register/device API — unmodified.
 #   port/          Zephyr port shim.
-#     deca_port.h       Zephyr-specific port header (include by app code).
-#     deca_port_stub.c  __weak stub implementations satisfied until UWB-93.
+#     deca_port.h       Port boundary header; declares port API for app code.
+#     deca_port.c       Real Zephyr SPI + GPIO port (UWB-93 — strong defs).
+#     deca_port_stub.c  __weak stub fallbacks (UWB-92 — overridden at link time
+#                       by the strong defs in deca_port.c).
+#
+# Link-time note: deca_port.c provides strong definitions for writetospi,
+# readfromspi, decamutexon, decamutexoff, and deca_sleep.  deca_port_stub.c
+# provides __weak definitions for the same symbols.  The linker discards the
+# weak definitions when it resolves the strong ones — confirmed via the absence
+# of "multiple definition" errors and the presence of "zephyr.elf" in the
+# build artefacts.
 
 if(CONFIG_DW1000)
 
@@ -16,7 +25,8 @@ if(CONFIG_DW1000)
   zephyr_library_sources(
     deca_driver/deca_device.c
     deca_driver/deca_params_init.c
-    port/deca_port_stub.c
+    port/deca_port_stub.c      # __weak stubs — silently overridden by deca_port.c
+    port/deca_port.c           # strong Zephyr SPI + GPIO port (UWB-93)
   )
 
   # Include paths for compilation units inside this library.
