@@ -126,13 +126,18 @@ config DW1000_PHY_RX_CODE
 	  Canonical value: 9 (UWB_PHY_RX_CODE = 9).
 
 config DW1000_PHY_NS_SFD
-	bool "DW1000 use Decawave non-standard SFD"
-	default n
+	int "DW1000 non-standard SFD enable (0 = standard, 1 = Decawave)"
+	default 0
+	range 0 1
 	help
-	  n = standard IEEE 802.15.4 SFD (UWB_PHY_NS_SFD = 0) — canonical.
-	  y = Decawave proprietary non-standard SFD.
+	  0 = standard IEEE 802.15.4 SFD (UWB_PHY_NS_SFD = 0) — canonical.
+	  1 = Decawave proprietary non-standard SFD.
 
-	  Canonical value: n (standard SFD, IEEE 802.15.4a compliant).
+	  Canonical value: 0 (standard SFD, IEEE 802.15.4a compliant).
+
+	  Uses int rather than bool so that CONFIG_DW1000_PHY_NS_SFD is always
+	  defined (Kconfig bool symbols are undefined, not 0, when set to 'n',
+	  which breaks _Static_assert comparisons in dw1000_config.c).
 
 	  At 6.8 Mbps the standard and Decawave non-standard SFDs are both 8
 	  symbols long, so there is no airtime difference.  Standard SFD is chosen
