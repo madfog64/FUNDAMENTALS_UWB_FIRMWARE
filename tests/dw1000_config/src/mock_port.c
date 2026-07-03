@@ -66,3 +66,20 @@ int readfromspi(uint16 headerLength, const uint8 *headerBuffer,
 decaIrqStatus_t decamutexon(void)  { return 0; }
 void decamutexoff(decaIrqStatus_t s) { (void)s; }
 void deca_sleep(unsigned int time_ms) { (void)time_ms; }
+
+/* ---------------------------------------------------------------------------
+ * Zephyr logging stubs.
+ *
+ * The unit_testing defconfig enables CONFIG_LOG=y which causes LOG_ERR() /
+ * LOG_DBG() macros in dw1000_config.c to call z_log_minimal_printk() at
+ * link time.  That function lives in Zephyr's log_minimal.c which is not
+ * compiled in the minimal unit_testing link set.  Stub it out here — unit
+ * tests do not need real log output, only assertion correctness.
+ * --------------------------------------------------------------------------- */
+#include <stdarg.h>
+
+void z_log_minimal_printk(const char *fmt, ...)
+{
+    (void)fmt;
+    /* No-op: discard log messages in unit tests. */
+}
