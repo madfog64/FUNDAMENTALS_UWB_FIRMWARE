@@ -38,19 +38,23 @@ if(CONFIG_DW1000)
     deca_driver/deca_params_init.c
     port/deca_port_stub.c      # __weak stubs — silently overridden by deca_port.c
     port/deca_port.c           # strong Zephyr SPI + GPIO port (UWB-93)
+    dw1000_config.c            # PHY configuration layer (UWB-155)
   )
 
   # Include paths for compilation units inside this library.
   zephyr_library_include_directories(
     deca_driver
     port
+    ${CMAKE_CURRENT_SOURCE_DIR}   # for phy_config.h and dw1000_config.h
   )
 
   # Export the vendored and port headers globally so application code can
-  # do: #include "deca_device_api.h" or #include "deca_port.h"
+  # do: #include "deca_device_api.h" or #include "deca_port.h" or
+  #     #include "dw1000_config.h" or #include "phy_config.h"
   zephyr_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/deca_driver
     ${CMAKE_CURRENT_SOURCE_DIR}/port
+    ${CMAKE_CURRENT_SOURCE_DIR}   # dw1000_config.h, phy_config.h
   )
 
 endif()

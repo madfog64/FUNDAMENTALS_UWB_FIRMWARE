@@ -6,7 +6,8 @@
 #                 Fails on any compile or link error.
 #
 #   twister     — runs host-side ztests on the 'unit_testing' platform.
-#                 Added in UWB-94: mocked-SPI DW1000 device-ID suite.
+#                 Scans all tests/ subdirectories (UWB-94: devid suite;
+#                 UWB-155: PHY config suite).
 #                 Fails if any test assertion fails (non-zero twister exit).
 #
 # Both jobs use the same zephyrproject-rtos/action-zephyr-setup action,
@@ -90,18 +91,25 @@ jobs:
         run: west build -b nrf52dk_nrf52832 uwb_tag_firmware
 
   # ---------------------------------------------------------------------------
-  # Job: twister — host-side ztest execution (unit_testing platform, UWB-94)
+  # Job: twister — host-side ztest execution (unit_testing platform)
   #
-  # Compiles and runs tests/dw1000_devid/ as a native Linux executable.
+  # Scans all subdirectories under tests/ for testcase.yaml files and runs
+  # them as native Linux executables on the 'unit_testing' platform.
+  #
+  # Current suites (alphabetical):
+  #   tests/dw1000_config/  — dw1000.config (UWB-155)
+  #     Mocks dwt_initialise/dwt_configure/dwt_configuretxrf at function level
+  #     to verify the PHY config values match contracts/uwb/phy_config.h v0.6.
+  #   tests/dw1000_devid/   — dw1000.devid  (UWB-94)
+  #     Mocked readfromspi() returns DEV_ID bytes; asserts SPI header framing
+  #     and decoded value 0xDECA0130.
+  #
   # The 'unit_testing' platform has no Zephyr kernel — it links only the
-  # ztest framework and the sources listed in the test's CMakeLists.txt.
-  # A mocked readfromspi() returns the DEV_ID bytes; the suite asserts the
-  # SPI header framing and the decoded value 0xDECA0130.
-  #
-  # twister exits non-zero if any test assertion fails, making CI go red.
+  # ztest framework and the sources listed in each test's CMakeLists.txt.
+  # twister exits non-zero if any test assertion fails → CI step fails.
   # ---------------------------------------------------------------------------
   twister:
-    name: west twister (unit_testing / dw1000_devid suite)
+    name: west twister (unit_testing / all suites)
     runs-on: ubuntu-22.04
 
     steps:
@@ -130,21 +138,21 @@ jobs:
         run: pip install pyelftools anytree
 
       # -----------------------------------------------------------------------
-      # Run twister on the dw1000_devid test suite.
+      # Run twister on all test suites under tests/.
       #
       # Flags:
       #   -p unit_testing    — target platform (native host, no emulation)
-      #   -T <dir>           — test directory to scan for testcase.yaml
+      #   -T <dir>           — root directory to scan for testcase.yaml files
       #   -v                 — verbose output (test names + PASS/FAIL per case)
       #   --no-clean         — keep twister-out/ for potential artifact upload
       #
       # Exit code: non-zero if any test fails → CI step fails → PR goes red.
       # -----------------------------------------------------------------------
-      - name: Run dw1000_devid ztest (twister)
+      - name: Run all ztests (twister)
         run: >
           west twister
           -p unit_testing
-          -T uwb_tag_firmware/tests/dw1000_devid
+          -T uwb_tag_firmware/tests
           -v
           --no-clean
 
