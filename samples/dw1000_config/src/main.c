@@ -89,7 +89,7 @@ int main(void)
     uint32 tx_fctrl = dwt_read32bitreg(TX_FCTRL_ID);
     uint32 sys_cfg  = dwt_read32bitreg(SYS_CFG_ID);
 
-    LOG_INF("CHAN_CTRL (0x1F) = 0x%08X", chan_ctrl);
+    LOG_INF("CHAN_CTRL (0x1F) = 0x%08X", (unsigned)chan_ctrl);
     LOG_INF("  TX channel:   %u (expected %u)",
             (unsigned)(chan_ctrl & CHAN_CTRL_TX_CHAN_MASK),
             (unsigned)CONFIG_DW1000_PHY_CHANNEL);
@@ -106,7 +106,7 @@ int main(void)
             (unsigned)((chan_ctrl & CHAN_CTRL_RX_PCOD_MASK) >> CHAN_CTRL_RX_PCOD_SHIFT),
             (unsigned)CONFIG_DW1000_PHY_RX_CODE);
 
-    LOG_INF("TX_FCTRL (0x08) low 32-bit = 0x%08X", tx_fctrl);
+    LOG_INF("TX_FCTRL (0x08) low 32-bit = 0x%08X", (unsigned)tx_fctrl);
     LOG_INF("  TX bit rate bits: 0x%05X (expected 0x%05X for 6M8)",
             (unsigned)(tx_fctrl & TX_FCTRL_TXBR_MASK),
             (unsigned)TX_FCTRL_TXBR_6M);
@@ -117,7 +117,7 @@ int main(void)
             (unsigned)(tx_fctrl & TX_FCTRL_TXPSR_PE_MASK),
             (unsigned)TX_FCTRL_TXPSR_PE_64);
 
-    LOG_INF("SYS_CFG  (0x04) = 0x%08X", sys_cfg);
+    LOG_INF("SYS_CFG  (0x04) = 0x%08X", (unsigned)sys_cfg);
     LOG_INF("  PHR mode bits: 0x%05X (expected 0x00000000 for STD)",
             (unsigned)(sys_cfg & SYS_CFG_PHR_MODE_11));
     LOG_INF("  RXM110K bit:   %u (expected 0 for non-110K mode)",
