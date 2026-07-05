@@ -1,0 +1,22 @@
+# Pinned version of contracts/uwb/ consumed by this firmware repo.
+#
+# The canonical PHY configuration (phy_config.h) and frame definitions
+# (uwb_frames.h) are copied from FUNDAMENTALS_SPORTS:contracts/uwb/ at the
+# protocol version recorded below.  Update this file and re-copy the headers
+# whenever you upgrade the pinned version.
+#
+# Source repo:  https://github.com/madfog64/FUNDAMENTALS_SPORTS
+# Directory:    contracts/uwb/
+# Protocol ver: UWB_PROTOCOL_VERSION = "0.6"  (defined in uwb_frames.h)
+# PHY cfg ver:  UWB_PHY_CONFIG_VERSION = "0.6" (defined in phy_config.h)
+#
+# Files pinned here:
+#   drivers/dw1000/phy_config.h   <- contracts/uwb/phy_config.h @ v0.6
+#
+# To upgrade:
+#   1. Copy the new header(s) from the contracts repo.
+#   2. Update the version strings above.
+#   3. Verify that the Kconfig defaults in drivers/dw1000/Kconfig still match
+#      the UWB_PHY_* constants in the new phy_config.h.
+#   4. Run 'west build' and 'west twister -p unit_testing -T tests/'.
+UWB_CONTRACTS_PHY_VERSION=0.6

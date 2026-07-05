@@ -26,3 +26,200 @@ config DW1000
 
 	  Call dw1000_port_init() once during application start-up before using
 	  any deca_driver or port functions.
+
+# ---------------------------------------------------------------------------
+# PHY radio configuration — consumed by drivers/dw1000/dw1000_config.c
+#
+# All defaults match contracts/uwb/phy_config.h version 0.6.  The constants
+# are named UWB_PHY_* there; the corresponding DWT_* equivalents from
+# deca_device_api.h are noted in the help text.
+#
+# A compile-time _Static_assert in dw1000_config.c cross-checks that these
+# Kconfig defaults remain in sync with the pinned phy_config.h header.
+# Do not change a default without also updating phy_config.h (a cross-repo
+# event per contracts/uwb/README.md §Versioning).
+# ---------------------------------------------------------------------------
+
+if DW1000
+
+config DW1000_PHY_CHANNEL
+	int "DW1000 UWB operating channel"
+	default 5
+	range 1 7
+	help
+	  Operating channel for both TX and RX. Valid DW1000 channels: 1–5 and 7.
+
+	  Canonical value: 5 (contracts/uwb/phy_config.h UWB_PHY_CHANNEL = 5).
+
+	  Channel 5 (6489.6 MHz centre, 499.2 MHz BW) has solid regulatory
+	  approval (US FCC Part 15.519, EU ETSI EN 302 065-1) and is the most
+	  widely characterised DW1000 channel in indoor ranging deployments.
+	  Channel 5 at PRF 64 MHz supports preamble codes 9–12 (IEEE 802.15.4a),
+	  which are orthogonal and allow multi-network coexistence.
+
+config DW1000_PHY_PRF
+	int "DW1000 Pulse Repetition Frequency (DWT_PRF_* value)"
+	default 2
+	range 1 2
+	help
+	  PRF selection: 1 = 16 MHz (DWT_PRF_16M), 2 = 64 MHz (DWT_PRF_64M).
+
+	  Canonical value: 2 — PRF 64 MHz (UWB_PHY_PRF = 2, DWT_PRF_64M).
+
+	  PRF 64 MHz provides superior first-path detection in NLOS and
+	  multipath-heavy indoor environments (sports halls, gymnasiums).
+	  The LDE algorithm's spreading gain at PRF 64 MHz isolates the leading
+	  edge of the first path from later multipath arrivals — the primary driver
+	  of TDoA accuracy where line-of-sight is obstructed.
+
+config DW1000_PHY_TX_PLEN
+	hex "DW1000 TX preamble length (DWT_PLEN_* value)"
+	default 0x04
+	help
+	  TX preamble length register value (DWT_PLEN_* constant):
+	    0x04 = DWT_PLEN_64   (64 symbols, standard)      <- canonical
+	    0x14 = DWT_PLEN_128  (128 symbols, non-standard)
+	    0x24 = DWT_PLEN_256  (256 symbols, non-standard)
+	    0x08 = DWT_PLEN_1024 (1024 symbols, standard)
+
+	  Canonical value: 0x04 — DWT_PLEN_64 (UWB_PHY_TX_PLEN = 0x04).
+
+	  At PRF 64 MHz, 64 preamble symbols occupy ~64 us.  Combined with the
+	  8-symbol SFD (~8 us), 850 kbps PHR (~22 us), and 6.8 Mbps payload
+	  (~15–32 us), total airtime is ~109–126 us — within the 150 us budget.
+	  PLEN 128 (~176 us total) exceeds the budget and is not suitable.
+
+config DW1000_PHY_PAC
+	int "DW1000 Preamble Acquisition Chunk size (DWT_PAC* value)"
+	default 0
+	range 0 3
+	help
+	  PAC size for RX: 0 = PAC8 (DWT_PAC8), 1 = PAC16, 2 = PAC32, 3 = PAC64.
+
+	  Canonical value: 0 — PAC8 (UWB_PHY_PAC = 0, DWT_PAC8).
+
+	  The DW1000 User Manual specifies PAC size as a function of TX preamble
+	  length: PLEN <= 128 symbols requires PAC 8 (DWT_PAC8).  PAC8 is the
+	  only correct value for DW1000_PHY_TX_PLEN = 0x04 (PLEN_64).
+
+config DW1000_PHY_TX_CODE
+	int "DW1000 TX preamble code"
+	default 9
+	range 1 24
+	help
+	  TX preamble code selection. For channel 5 + PRF 64 MHz, valid IEEE
+	  802.15.4a codes are 9, 10, 11, and 12.
+
+	  Canonical value: 9 (UWB_PHY_TX_CODE = 9).
+
+	  Must match DW1000_PHY_RX_CODE on all network nodes (tags and anchors).
+	  A device transmitting on a different code will not be detected.
+
+config DW1000_PHY_RX_CODE
+	int "DW1000 RX preamble code"
+	default 9
+	range 1 24
+	help
+	  RX preamble code selection. Must match DW1000_PHY_TX_CODE across all
+	  network nodes.
+
+	  Canonical value: 9 (UWB_PHY_RX_CODE = 9).
+
+config DW1000_PHY_NS_SFD
+	int "DW1000 non-standard SFD enable (0 = standard, 1 = Decawave)"
+	default 0
+	range 0 1
+	help
+	  0 = standard IEEE 802.15.4 SFD (UWB_PHY_NS_SFD = 0) — canonical.
+	  1 = Decawave proprietary non-standard SFD.
+
+	  Canonical value: 0 (standard SFD, IEEE 802.15.4a compliant).
+
+	  Uses int rather than bool so that CONFIG_DW1000_PHY_NS_SFD is always
+	  defined (Kconfig bool symbols are undefined, not 0, when set to 'n',
+	  which breaks _Static_assert comparisons in dw1000_config.c).
+
+	  At 6.8 Mbps the standard and Decawave non-standard SFDs are both 8
+	  symbols long, so there is no airtime difference.  Standard SFD is chosen
+	  for interoperability.
+
+config DW1000_PHY_DATA_RATE
+	int "DW1000 data rate (DWT_BR_* value)"
+	default 2
+	range 0 2
+	help
+	  Data rate: 0 = 110 kbps (DWT_BR_110K), 1 = 850 kbps (DWT_BR_850K),
+	             2 = 6.8 Mbps (DWT_BR_6M8).
+
+	  Canonical value: 2 — 6.8 Mbps (UWB_PHY_DATA_RATE = 2, DWT_BR_6M8).
+
+	  At 850 kbps, 17 bytes of payload alone takes ~160 us, exceeding the
+	  150 us total blink budget.  6.8 Mbps is the only rate that keeps the
+	  payload within budget alongside PLEN 64.
+
+	  Note: the DW1000 always transmits the PHR at 850 kbps regardless of
+	  this setting — this is a hardware characteristic, not configurable.
+
+config DW1000_PHY_PHR_MODE
+	int "DW1000 PHR mode (DWT_PHRMODE_* value)"
+	default 0
+	range 0 3
+	help
+	  PHR mode: 0 = standard (DWT_PHRMODE_STD), 3 = extended (DWT_PHRMODE_EXT).
+
+	  Canonical value: 0 — standard (UWB_PHY_PHR_MODE = 0, DWT_PHRMODE_STD).
+
+	  Standard PHR mode supports frames up to 127 bytes.  All frame types in
+	  contracts/uwb/uwb_frames.h are within this limit (largest: TWR_FINAL
+	  at 27 bytes PSDU).
+
+config DW1000_PHY_SFD_TIMEOUT
+	int "DW1000 SFD timeout (symbols)"
+	default 65
+	range 1 65535
+	help
+	  SFD detection timeout in symbols. DW1000 User Manual recommended formula:
+	    sfdTO = PLEN + 1 + SFD_len - PAC_size
+	  For the canonical config (PLEN=64, SFD=8 standard, PAC=8):
+	    sfdTO = 64 + 1 + 8 - 8 = 65
+
+	  Canonical value: 65 (UWB_PHY_SFD_TIMEOUT = 65).
+
+	  This is the tightest correct value for this preamble/SFD/PAC combination.
+	  A tight timeout reduces time wasted waiting on corrupted preambles.  The
+	  DW1000 default (DWT_SFDTOC_DEF = 4161) is far too permissive for PLEN 64.
+
+config DW1000_PHY_TX_PGDELAY
+	hex "DW1000 TX pulse generator delay (TC_PGDELAY register)"
+	default 0xC0
+	help
+	  TC_PGDELAY register byte (0x2A:0B). Controls the TX pulse shape /
+	  bandwidth. Decawave-specified per-channel calibration constant:
+	    Channel 1: 0xC9   Channel 2: 0xC2   Channel 3: 0xC5
+	    Channel 4: 0x95   Channel 5: 0xC0   Channel 7: 0x93
+
+	  Canonical value: 0xC0 — TC_PGDELAY_CH5 (UWB_PHY_TX_PGDELAY = 0xC0).
+
+	  Do not change without RF spectrum analysis.
+
+config DW1000_PHY_TX_POWER
+	hex "DW1000 TX power register value (TX_POWER, 0x1E)"
+	default 0x0E082848
+	help
+	  TX power register value (TX_POWER, register 0x1E). This is a 4-byte
+	  register encoding the power for different frame sections:
+	    bits [31:24] BOOST_0.125ms_PWR   (boosted, short frames)
+	    bits [23:16] BOOST_0.25ms_PWR    (boosted, medium frames)
+	    bits [15:8]  BOOST_0.5ms_PWR     (boosted, longer frames / PHR)
+	    bits  [7:0]  DEFAULT_PWR         (non-boosted, normal operation)
+
+	  Default 0x0E082848 is UWB_PHY_TX_POWER_NOMINAL — the Decawave nominal
+	  non-boosted TX power for channel 5 / PRF 64 MHz with smart TX disabled.
+	  Use this ONLY on blank development hardware (unprogrammed OTP).
+
+	  Production hardware MUST use the factory-calibrated OTP value.
+	  Read it via dwt_read32bitreg(TX_POWER_ID) after dwt_initialise();
+	  a non-zero value indicates factory programming.  Using the factory
+	  value is required for regulatory compliance.
+
+endif # DW1000
