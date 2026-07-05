@@ -1,12 +1,18 @@
 /*! ----------------------------------------------------------------------------
  * @file    mock_deca_driver.c
  * @brief   Mock implementations of deca_driver API functions called by
- *          dw1000_configure() (UWB-155 unit test).
+ *          dw1000_configure() (UWB-155, UWB-156 unit tests).
  *
  * These stubs replace deca_device.c and deca_params_init.c in the
  * unit_testing build.  They have no hardware or SPI dependencies — they
  * capture arguments so the test assertions can verify dw1000_configure()
  * drove the driver with the correct parameters.
+ *
+ * UWB-156 additions:
+ *   dwt_settxantennadelay()  — captures last TX delay value and call count
+ *   dwt_setrxantennadelay()  — captures last RX delay value and call count
+ *   dwt_otpread()            — returns mock_otp_state.antdly_word for address
+ *                              DW1000_OTP_ANTDLY_ADDRESS (0x1C); zero otherwise
  *
  * @attention
  * SPDX-License-Identifier: MIT
@@ -15,21 +21,26 @@
 
 #include <string.h>
 #include "deca_device_api.h"
+#include "dw1000_config.h"
 #include "mock_deca_driver.h"
 
 /* ---------------------------------------------------------------------------
  * Captured call state (inspected by test assertions)
  * --------------------------------------------------------------------------- */
-struct mock_dwt_init_state mock_init_state;
-struct mock_dwt_cfg_state  mock_cfg_state;
-struct mock_dwt_txrf_state mock_txrf_state;
+struct mock_dwt_init_state    mock_init_state;
+struct mock_dwt_cfg_state     mock_cfg_state;
+struct mock_dwt_txrf_state    mock_txrf_state;
+struct mock_dwt_antenna_state mock_antenna_state;
+struct mock_dwt_otp_state     mock_otp_state;
 
 void mock_deca_reset(void)
 {
-    memset(&mock_init_state, 0, sizeof(mock_init_state));
-    memset(&mock_cfg_state,  0, sizeof(mock_cfg_state));
-    memset(&mock_txrf_state, 0, sizeof(mock_txrf_state));
-    /* Default: dwt_initialise() returns success. */
+    memset(&mock_init_state,    0, sizeof(mock_init_state));
+    memset(&mock_cfg_state,     0, sizeof(mock_cfg_state));
+    memset(&mock_txrf_state,    0, sizeof(mock_txrf_state));
+    memset(&mock_antenna_state, 0, sizeof(mock_antenna_state));
+    memset(&mock_otp_state,     0, sizeof(mock_otp_state));
+    /* Default: dwt_initialise() returns success; OTP is unprogrammed (0). */
     mock_init_state.return_value = DWT_SUCCESS;
 }
 
@@ -70,6 +81,55 @@ void dwt_configuretxrf(dwt_txconfig_t *config)
     mock_txrf_state.called = 1;
     if (config != NULL) {
         memcpy(&mock_txrf_state.config, config, sizeof(dwt_txconfig_t));
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Mock dwt_settxantennadelay (UWB-156)
+ *
+ * Captures the TX delay value and increments the call counter.
+ * --------------------------------------------------------------------------- */
+void dwt_settxantennadelay(uint16 txDelay)
+{
+    mock_antenna_state.tx_called++;
+    mock_antenna_state.tx_delay = txDelay;
+}
+
+/* ---------------------------------------------------------------------------
+ * Mock dwt_setrxantennadelay (UWB-156)
+ *
+ * Captures the RX delay value and increments the call counter.
+ * --------------------------------------------------------------------------- */
+void dwt_setrxantennadelay(uint16 rxDelay)
+{
+    mock_antenna_state.rx_called++;
+    mock_antenna_state.rx_delay = rxDelay;
+}
+
+/* ---------------------------------------------------------------------------
+ * Mock dwt_otpread (UWB-156)
+ *
+ * Returns mock_otp_state.antdly_word when the requested address matches
+ * DW1000_OTP_ANTDLY_ADDRESS (0x1C).  All other addresses return 0.
+ *
+ * Set mock_otp_state.antdly_word before calling dw1000_configure() to
+ * simulate a factory-calibrated (non-zero) or unprogrammed (zero) OTP:
+ *   - Unprogrammed: antdly_word = 0           (default after mock_deca_reset)
+ *   - PRF-64 cal'd: antdly_word = (val << 16) (val in bits[31:16])
+ * --------------------------------------------------------------------------- */
+void dwt_otpread(uint32 address, uint32 *array, uint8 length)
+{
+    uint8 i;
+
+    if (array == NULL || length == 0u) {
+        return;
+    }
+    for (i = 0u; i < length; i++) {
+        if (address + i == (uint32)DW1000_OTP_ANTDLY_ADDRESS) {
+            array[i] = mock_otp_state.antdly_word;
+        } else {
+            array[i] = 0u;
+        }
     }
 }
 
