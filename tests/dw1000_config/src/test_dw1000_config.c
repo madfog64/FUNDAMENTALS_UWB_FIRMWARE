@@ -1,6 +1,6 @@
 /*! ----------------------------------------------------------------------------
  * @file    test_dw1000_config.c
- * @brief   ztest suite: DW1000 PHY configuration (UWB-155)
+ * @brief   ztest suite: DW1000 PHY configuration (UWB-155, UWB-156)
  *
  * Platform: unit_testing (native-hosted, no Zephyr kernel, no real SPI).
  *
@@ -8,11 +8,19 @@
  * API with the exact PHY parameter values mandated by contracts/uwb/phy_config.h
  * version 0.6 (pinned at drivers/dw1000/phy_config.h).
  *
+ * UWB-156 tests (9, 10, 11) verify antenna delay hook behaviour:
+ *   9. Kconfig defaults used when OTP word at 0x1C is zero (unprogrammed).
+ *  10. OTP PRF-64 half (bits[31:16]) overrides Kconfig defaults when non-zero.
+ *  11. dw1000_set_antenna_delay() overrides TX/RX independently at runtime.
+ *
  * Mocked functions (in mock_deca_driver.c and mock_port.c):
- *   dwt_initialise()      — captures config arg (DWT_LOADUCODE vs DWT_LOADNONE)
- *   dwt_configure()       — captures full dwt_config_t struct
- *   dwt_configuretxrf()   — captures dwt_txconfig_t struct
- *   reset_DW1000()        — call counter
+ *   dwt_initialise()           — captures config arg (DWT_LOADUCODE vs DWT_LOADNONE)
+ *   dwt_configure()            — captures full dwt_config_t struct
+ *   dwt_configuretxrf()        — captures dwt_txconfig_t struct
+ *   dwt_settxantennadelay()    — captures TX delay + call count (UWB-156)
+ *   dwt_setrxantennadelay()    — captures RX delay + call count (UWB-156)
+ *   dwt_otpread()              — returns configurable mock_otp_state (UWB-156)
+ *   reset_DW1000()             — call counter
  *   port_set_dw1000_slowrate() — call counter
  *   port_set_dw1000_fastrate() — call counter
  *
@@ -221,4 +229,151 @@ ZTEST(dw1000_config, test_init_failure_returns_eio)
     zassert_equal(mock_cfg_state.called, 0,
         "dwt_configure() must not be called when dwt_initialise fails; "
         "was called %d times", mock_cfg_state.called);
+}
+
+/* ---------------------------------------------------------------------------
+ * Test 9 — Antenna delay: Kconfig defaults used when OTP is unprogrammed
+ *
+ * When dwt_otpread() returns 0 for the antenna-delay OTP address (0x1C),
+ * dw1000_configure() must call BOTH dwt_settxantennadelay() and
+ * dwt_setrxantennadelay() with the Kconfig compile-time defaults
+ * (CONFIG_DW1000_ANTENNA_DELAY_TX and CONFIG_DW1000_ANTENNA_DELAY_RX).
+ *
+ * Acceptance criterion (a) from UWB-156.
+ * --------------------------------------------------------------------------- */
+ZTEST(dw1000_config, test_antenna_delay_kconfig_default_when_otp_empty)
+{
+    /* OTP returns 0 — the default state after mock_deca_reset(). */
+    /* mock_otp_state.antdly_word is already 0 at this point. */
+
+    int ret = dw1000_configure();
+
+    zassert_equal(ret, 0,
+        "dw1000_configure() returned %d (expected 0)", ret);
+
+    /* TX antenna delay must be called exactly once with the Kconfig default. */
+    zassert_equal(mock_antenna_state.tx_called, 1,
+        "Expected dwt_settxantennadelay() to be called once; got %d",
+        mock_antenna_state.tx_called);
+
+    zassert_equal(mock_antenna_state.tx_delay,
+        (uint16)CONFIG_DW1000_ANTENNA_DELAY_TX,
+        "TX delay: expected Kconfig default %u; got %u",
+        (unsigned)CONFIG_DW1000_ANTENNA_DELAY_TX,
+        (unsigned)mock_antenna_state.tx_delay);
+
+    /* RX antenna delay must be called exactly once with the Kconfig default. */
+    zassert_equal(mock_antenna_state.rx_called, 1,
+        "Expected dwt_setrxantennadelay() to be called once; got %d",
+        mock_antenna_state.rx_called);
+
+    zassert_equal(mock_antenna_state.rx_delay,
+        (uint16)CONFIG_DW1000_ANTENNA_DELAY_RX,
+        "RX delay: expected Kconfig default %u; got %u",
+        (unsigned)CONFIG_DW1000_ANTENNA_DELAY_RX,
+        (unsigned)mock_antenna_state.rx_delay);
+}
+
+/* ---------------------------------------------------------------------------
+ * Test 10 — Antenna delay: OTP PRF-64 value overrides Kconfig defaults
+ *
+ * When the OTP word at address 0x1C has a non-zero PRF-64 half (bits[31:16]),
+ * dw1000_configure() must use THAT value for both dwt_settxantennadelay() and
+ * dwt_setrxantennadelay() instead of the Kconfig defaults.
+ *
+ * OTP word layout:
+ *   bits[15:0]  — PRF 16 MHz delay (irrelevant for this config — PRF 64 in use)
+ *   bits[31:16] — PRF 64 MHz delay → extracted and applied to both TX and RX
+ *
+ * Acceptance criterion (b) from UWB-156.
+ * --------------------------------------------------------------------------- */
+ZTEST(dw1000_config, test_antenna_delay_otp_overrides_kconfig)
+{
+    /*
+     * Simulate a factory-programmed device:
+     *   PRF-64 delay (bits[31:16]) = 0x4040 (16448 ticks — slightly higher
+     *   than the Kconfig default 16436, chosen to be unambiguously different)
+     *   PRF-16 delay (bits[15:0])  = 0x3E80 (some other value, not used)
+     */
+    const uint16 otp_prf64_delay = 0x4040u;
+    const uint16 otp_prf16_delay = 0x3E80u;
+
+    mock_otp_state.antdly_word = ((uint32)otp_prf64_delay << 16) |
+                                 (uint32)otp_prf16_delay;
+
+    (void)dw1000_configure();
+
+    /* Both TX and RX must use the OTP PRF-64 half. */
+    zassert_equal(mock_antenna_state.tx_delay, otp_prf64_delay,
+        "TX delay: expected OTP PRF-64 value 0x%04X; got 0x%04X",
+        (unsigned)otp_prf64_delay, (unsigned)mock_antenna_state.tx_delay);
+
+    zassert_equal(mock_antenna_state.rx_delay, otp_prf64_delay,
+        "RX delay: expected OTP PRF-64 value 0x%04X; got 0x%04X",
+        (unsigned)otp_prf64_delay, (unsigned)mock_antenna_state.rx_delay);
+
+    /* Confirm the Kconfig default was NOT used (guard against equal values). */
+    zassert_not_equal(otp_prf64_delay, (uint16)CONFIG_DW1000_ANTENNA_DELAY_TX,
+        "Test misconfigured: OTP value equals Kconfig default — "
+        "choose a different OTP test value");
+}
+
+/* ---------------------------------------------------------------------------
+ * Test 11 — dw1000_set_antenna_delay() overrides at runtime
+ *
+ * After dw1000_configure() has applied the initial delays, calling
+ * dw1000_set_antenna_delay(tx, rx) must:
+ *   (a) call dwt_settxantennadelay(tx) and dwt_setrxantennadelay(rx), and
+ *   (b) update the cached values returned by dw1000_get_antenna_delay().
+ *
+ * TX and RX values are overridden independently (different values used here
+ * to confirm both registers are written separately).
+ *
+ * Acceptance criterion (c) from UWB-156.
+ * --------------------------------------------------------------------------- */
+ZTEST(dw1000_config, test_set_antenna_delay_runtime_override)
+{
+    /* Start from a known state: configure with OTP empty → Kconfig defaults. */
+    (void)dw1000_configure();
+
+    /* Reset call counters so we can isolate the set_antenna_delay() calls. */
+    mock_antenna_state.tx_called = 0;
+    mock_antenna_state.rx_called = 0;
+
+    /* Override with distinct TX and RX values. */
+    const uint16_t new_tx = 0x5000u;
+    const uint16_t new_rx = 0x5010u;
+
+    dw1000_set_antenna_delay(new_tx, new_rx);
+
+    /* dwt_settxantennadelay / dwt_setrxantennadelay called once each. */
+    zassert_equal(mock_antenna_state.tx_called, 1,
+        "Expected dwt_settxantennadelay() called once after set; got %d",
+        mock_antenna_state.tx_called);
+
+    zassert_equal(mock_antenna_state.tx_delay, (uint16)new_tx,
+        "TX delay after override: expected 0x%04X; got 0x%04X",
+        (unsigned)new_tx, (unsigned)mock_antenna_state.tx_delay);
+
+    zassert_equal(mock_antenna_state.rx_called, 1,
+        "Expected dwt_setrxantennadelay() called once after set; got %d",
+        mock_antenna_state.rx_called);
+
+    zassert_equal(mock_antenna_state.rx_delay, (uint16)new_rx,
+        "RX delay after override: expected 0x%04X; got 0x%04X",
+        (unsigned)new_rx, (unsigned)mock_antenna_state.rx_delay);
+
+    /* dw1000_get_antenna_delay() must reflect the new values. */
+    uint16_t get_tx = 0u;
+    uint16_t get_rx = 0u;
+
+    dw1000_get_antenna_delay(&get_tx, &get_rx);
+
+    zassert_equal(get_tx, new_tx,
+        "get_antenna_delay TX: expected 0x%04X; got 0x%04X",
+        (unsigned)new_tx, (unsigned)get_tx);
+
+    zassert_equal(get_rx, new_rx,
+        "get_antenna_delay RX: expected 0x%04X; got 0x%04X",
+        (unsigned)new_rx, (unsigned)get_rx);
 }

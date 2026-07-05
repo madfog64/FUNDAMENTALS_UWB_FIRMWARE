@@ -222,4 +222,93 @@ config DW1000_PHY_TX_POWER
 	  a non-zero value indicates factory programming.  Using the factory
 	  value is required for regulatory compliance.
 
+# ---------------------------------------------------------------------------
+# Antenna delay — TX and RX independently configured (UWB-156)
+#
+# The DW1000 hardware path for UWB pulses incurs a fixed propagation delay
+# (PCB trace + SMA connector + antenna feed + antenna phase centre).  The
+# driver compensates for this by adding the programmed antenna delay to every
+# hardware TX timestamp (TX_ANTD register) and subtracting it from every RX
+# timestamp (LDE_RXANTD register).  This keeps reported timestamps in "air"
+# time rather than "cable" time — critical for TDoA and DS-TWR accuracy.
+#
+# TX and RX are programmed via separate deca_driver calls:
+#   dwt_settxantennadelay(tx)  — writes TX_ANTD (register 0x18)
+#   dwt_setrxantennadelay(rx)  — writes LDE_RXANTD (register 0x2E:1804)
+#
+# Even though the DW1000 has a single shared RF path (one antenna), the two
+# registers exist because the transmit and receive signal-conditioning circuits
+# have different internal latencies.  In practice, factory OTP calibration
+# provides one value per PRF that is typically used for both TX and RX.
+# Advanced users may tune TX and RX independently after on-device measurement.
+#
+# Units: DW1000 fine timestamp ticks.
+#
+#   1 DW1000 tick = 1 / (128 × 499.2 MHz) ≈ 15.65 ps
+#   1 mm of air path ≈ 1 / 299.792 mm/ps ≈ 3.336 ps ≈ 0.213 ticks
+#   1 tick ≈ 4.69 mm effective one-way path
+#
+# Default 16436 ticks ≈ 257 ns ≈ 77 mm:
+#   This is the Decawave-published example value for the DWM1001 module at
+#   PRF 64 MHz (see old-firmware reference messages.c and Decawave APS014
+#   application note).  It compensates for the combined PCB trace, SMA stub,
+#   and antenna reactance on the DWM1001 evaluation PCB.
+#
+#   The value is hardware-specific: a different PCB layout, antenna, or
+#   connector path requires a different calibration.  The correct procedure
+#   is the DS-TWR calibration solve described in ADR-001; until that
+#   calibration is run, this default provides a reasonable starting point
+#   that avoids a systematic 77 mm bias in uncalibrated ranging.
+#
+# OTP preference (dw1000_configure runtime logic):
+#   The DW1000 OTP at address 0x1C stores the factory antenna delay:
+#     bits[15:0]  — PRF 16 MHz delay
+#     bits[31:16] — PRF 64 MHz delay
+#   dw1000_configure() reads this word; if the PRF-64 half is non-zero, that
+#   OTP value is used instead of these Kconfig defaults.
+# ---------------------------------------------------------------------------
+
+config DW1000_ANTENNA_DELAY_TX
+	int "DW1000 TX antenna delay (ticks; fallback when OTP is unprogrammed)"
+	default 16436
+	range 0 65535
+	help
+	  TX antenna delay applied via dwt_settxantennadelay() during
+	  dw1000_configure().  Adds this many ticks to every TX timestamp so
+	  that reported TX times represent the moment the UWB pulse leaves the
+	  antenna, not the moment the digital frame was handed to the TX engine.
+
+	  Units: DW1000 fine timestamp ticks (≈ 15.65 ps / tick, ≈ 4.69 mm/tick
+	  at the speed of light).
+
+	  NOTE: this value is used ONLY when the factory antenna delay is absent
+	  from OTP (address 0x1C, PRF-64 half = 0).  When OTP is programmed,
+	  the OTP value overrides this Kconfig setting at run time.
+
+	  Default 16436: Decawave example value for DWM1001 at PRF 64 MHz
+	  (≈ 257 ns ≈ 77 mm).  Hardware-specific — replace after DS-TWR
+	  calibration (ADR-001) for production deployments.
+
+config DW1000_ANTENNA_DELAY_RX
+	int "DW1000 RX antenna delay (ticks; fallback when OTP is unprogrammed)"
+	default 16436
+	range 0 65535
+	help
+	  RX antenna delay applied via dwt_setrxantennadelay() during
+	  dw1000_configure().  Subtracts this many ticks from every RX timestamp
+	  so that reported RX times represent the moment the UWB pulse arrived at
+	  the antenna, not the moment the digital baseband detected the frame.
+
+	  Units: DW1000 fine timestamp ticks (≈ 15.65 ps / tick, ≈ 4.69 mm/tick
+	  at the speed of light).
+
+	  NOTE: this value is used ONLY when the factory antenna delay is absent
+	  from OTP (address 0x1C, PRF-64 half = 0).  When OTP is programmed,
+	  the OTP value overrides this Kconfig setting at run time.
+
+	  Default 16436: matches DW1000_ANTENNA_DELAY_TX — on a DWM1001 module
+	  the TX and RX paths share the same antenna and have comparable latency.
+	  The factory OTP value (when present) is also used for both TX and RX.
+	  Hardware-specific — replace after DS-TWR calibration (ADR-001).
+
 endif # DW1000
