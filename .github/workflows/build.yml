@@ -121,6 +121,11 @@ jobs:
   #     the debug-range formula (uwb_twr_range_mm()) against a hand-calc
   #     fixture, and the no-POLL/no-FINAL/foreign-frame/mismatched-exchange-id
   #     paths.
+  #   tests/uwb_cycle_ref/  — uwb.cycle_ref (UWB-243)
+  #     Pure logic, no deca_driver: asserts init/get, on_sync acquisition and
+  #     latest-edge tracking, on_miss tolerance + invalidation at
+  #     CONFIG_UWB_SYNC_MAX_MISSED, re-acquisition after invalidation, and
+  #     the cycle_seq discontinuity (still-accepted) / 16-bit wrap paths.
   #
   # The 'unit_testing' platform has no Zephyr kernel — it links only the
   # ztest framework and the sources listed in each test's CMakeLists.txt.

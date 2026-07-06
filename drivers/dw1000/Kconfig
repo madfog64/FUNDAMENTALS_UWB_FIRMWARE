@@ -413,4 +413,36 @@ config UWB_TWR_RESPONDER_DEBUG_RANGE
 	  Default n: keeps production builds free of the extra floating-point
 	  arithmetic and log traffic on every exchange.
 
+# ---------------------------------------------------------------------------
+# Tag-side cycle reference — consumed by drivers/dw1000/uwb_cycle_ref.c
+# (UWB-243). The tag maintains a cycle-start reference from the stream of
+# parsed SYNC frames (dw1000_sync.c, UWB-242); this is the "how many
+# consecutive missed SYNCs are tolerated before it stops trusting that
+# reference" knob. See uwb_cycle_ref.h for the full seam contract UWB-9
+# (the blink slot scheduler) consumes.
+# ---------------------------------------------------------------------------
+
+config UWB_SYNC_MAX_MISSED
+	int "Max consecutive missed SYNC frames before the tag cycle reference is invalidated"
+	default 3
+	range 0 65535
+	help
+	  uwb_cycle_ref_on_miss() (UWB-243) increments a per-reference missed
+	  counter each time the tag listens for a SYNC frame and does not get
+	  one. Once that counter exceeds this value, the reference is marked
+	  invalid and uwb_cycle_ref_get() returns false — the tag MUST stop
+	  scheduling blinks until a fresh SYNC frame re-anchors the reference.
+
+	  Default 3: tolerates a short burst of dropped/corrupted SYNC frames
+	  (a single missed superframe cycle is routine on a UWB channel shared
+	  with other traffic and reflection/NLOS effects) without forcing the
+	  tag to sit out of tracking, while still bounding how long the tag
+	  will keep blinking off a cycle-start epoch it has not actually heard
+	  confirmed recently. A tag that blinks against a stale/drifted
+	  reference risks colliding with another tag's TDMA slot (ADR-001) —
+	  this value trades that risk against tracking availability during
+	  brief SYNC reception gaps. Tune empirically once real superframe
+	  timing (UWB-9) and channel conditions are measured; not yet
+	  calibrated against on-air data.
+
 endif # DW1000
