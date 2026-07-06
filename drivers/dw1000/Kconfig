@@ -351,6 +351,69 @@ config UWB_TWR_RESP_REPLY_DELAY_DTU
 	  responder state machine (UWB-232) is in place.
 
 # ---------------------------------------------------------------------------
+# TWR responder mode state machine — consumed by
+# drivers/dw1000/twr_responder.c (UWB-232).
+# ---------------------------------------------------------------------------
+
+config UWB_TWR_RESPONDER_POLL_TIMEOUT_US
+	int "TWR responder: RX timeout waiting for a POLL (microseconds)"
+	default 100000
+	range 0 4000000
+	help
+	  Hardware RX timeout (forwarded to dw1000_rx(), UWB-231) while the
+	  responder is idle, waiting for the next DS-TWR POLL to arrive.
+
+	  Units: microseconds. 0 disables the hardware timeout (dw1000_rx()
+	  stays armed indefinitely) — not recommended for the responder loop,
+	  since twr_responder_run_once() would then block forever instead of
+	  returning TWR_RESPONDER_NO_POLL.
+
+	  Default 100,000 us (100 ms): comfortably longer than a single DS-TWR
+	  exchange (a few milliseconds, see CONFIG_UWB_TWR_RESP_REPLY_DELAY_DTU)
+	  so the responder does not busy-spin re-arming RX, while still being
+	  short enough that samples/twr_responder can log periodic "still
+	  listening" heartbeats. Tune empirically per calibration cadence
+	  (ADR-001 §Phase 1).
+
+config UWB_TWR_RESPONDER_FINAL_TIMEOUT_US
+	int "TWR responder: RX timeout waiting for the matching FINAL (microseconds)"
+	default 10000
+	range 0 4000000
+	help
+	  Hardware RX timeout (forwarded to dw1000_rx(), UWB-231) while the
+	  responder waits for the initiator's FINAL after its RESPONSE has been
+	  sent.
+
+	  Units: microseconds. 0 disables the hardware timeout — not
+	  recommended; a missing FINAL would then hang
+	  twr_responder_run_once() instead of returning
+	  TWR_RESPONDER_NO_FINAL.
+
+	  Default 10,000 us (10 ms): several times CONFIG_UWB_TWR_RESP_REPLY_DELAY_DTU
+	  (~2 ms) — the FINAL is expected shortly after RESPONSE TX completes, so
+	  this only needs enough margin to cover the initiator's own reply-delay
+	  scheduling, not a full idle-POLL-style wait.
+
+config UWB_TWR_RESPONDER_DEBUG_RANGE
+	bool "TWR responder: compute + log a local DS-TWR range estimate (debug only)"
+	default n
+	help
+	  When enabled, a completed DS-TWR exchange (TWR_RESPONDER_EXCHANGE_OK)
+	  additionally computes a local range estimate from T1..T6 via
+	  uwb_twr_range_mm() (drivers/dw1000/uwb_frames.h §"DS-TWR calibration
+	  frames" range formula) and LOG_INF()s it.
+
+	  Debug/diagnostic aid only:
+	    - No antenna-delay recalibration or NLOS/outlier rejection.
+	    - The computed range is NEVER reported off-device (ADR-011 — the
+	      tag is UWB-only; T1..T6 are captured locally only). Production
+	      calibration solves happen in the cloud Lambda from the anchor's
+	      own reported timestamps, not from this tag-side estimate.
+
+	  Default n: keeps production builds free of the extra floating-point
+	  arithmetic and log traffic on every exchange.
+
+# ---------------------------------------------------------------------------
 # Tag-side cycle reference — consumed by drivers/dw1000/uwb_cycle_ref.c
 # (UWB-243). The tag maintains a cycle-start reference from the stream of
 # parsed SYNC frames (dw1000_sync.c, UWB-242); this is the "how many
