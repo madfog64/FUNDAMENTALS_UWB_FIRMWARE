@@ -152,6 +152,9 @@ uwb_tag_firmware/
 
 Upcoming additions (later subissues):
 - `drivers/dw1000/` — Zephyr SPI port of `deca_driver` (UWB-91)
+- `drivers/dw1000/dw1000_sync.{c,h}` — tag-side SYNC-frame RX + validate/parse
+  (UWB-242); maintaining the tag cycle reference and the tracking-loop seam
+  is sibling UWB-243, not yet implemented
 - `src/uwb_blink.c` — TDoA blink application (UWB-92)
 - `boards/dwm1001.conf` / full custom board definition (if needed)
 - MCUboot OTA integration (ADR-008, UWB-94)
