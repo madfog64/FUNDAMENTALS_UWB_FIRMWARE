@@ -43,6 +43,7 @@ if(CONFIG_DW1000)
     dw1000_sync.c              # Tag-side SYNC RX + validate/parse (UWB-242)
     uwb_cycle_ref.c            # Tag-side cycle reference (UWB-243)
     uwb_twr_codec.c            # DS-TWR frame build/parse codec (UWB-230)
+    uwb_blink_codec.c          # TDoA tag-blink frame build/parse codec (UWB-250)
     twr_responder.c            # DS-TWR responder state machine (UWB-232)
   )
 
