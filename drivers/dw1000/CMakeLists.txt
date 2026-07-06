@@ -45,6 +45,7 @@ if(CONFIG_DW1000)
     uwb_slot_timing.c          # TDMA slot-timing computation (UWB-251)
     uwb_twr_codec.c            # DS-TWR frame build/parse codec (UWB-230)
     uwb_blink_codec.c          # TDoA tag-blink frame build/parse codec (UWB-250)
+    uwb_join_codec.c           # Aloha join frame build/parse codec (UWB-259)
     twr_responder.c            # DS-TWR responder state machine (UWB-232)
   )
 
