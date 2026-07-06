@@ -147,6 +147,9 @@ ZTEST(dw1000_ranging, test_tx_at_hpdwarn_returns_eio)
     zassert_equal(mock_starttx_state.called, 1,
         "Expected dwt_starttx() to be called once; got %d",
         mock_starttx_state.called);
+    zassert_equal(mock_forcetrxoff_state.called, 1,
+        "Expected dwt_forcetrxoff() called once on HPDWARN; got %d",
+        mock_forcetrxoff_state.called);
 }
 
 /* ---------------------------------------------------------------------------
@@ -284,6 +287,9 @@ ZTEST(dw1000_ranging, test_rx_frame_too_large_returns_einval)
         "Expected -EINVAL when frame length exceeds buffer capacity; got %d", ret);
     zassert_equal(mock_readrxdata_state.called, 0,
         "dwt_readrxdata() must not be called when the frame doesn't fit");
+    zassert_equal(mock_forcetrxoff_state.called, 1,
+        "Expected dwt_forcetrxoff() called once on oversize-frame guard; got %d",
+        mock_forcetrxoff_state.called);
 }
 
 /* ---------------------------------------------------------------------------

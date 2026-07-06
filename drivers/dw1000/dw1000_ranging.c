@@ -179,6 +179,7 @@ int dw1000_rx(uint8_t *buf, uint16_t *len, uint64_t *rx_ts, uint32_t timeout_us)
 
         if (frame_len > buf_cap) {
             dwt_write32bitreg(SYS_STATUS_ID, (uint32)SYS_STATUS_RXFCG);
+            dwt_forcetrxoff();
             LOG_ERR("dw1000_rx() frame len %u exceeds buffer capacity %u",
                     (unsigned)frame_len, (unsigned)buf_cap);
             return -EINVAL;
@@ -249,6 +250,7 @@ int dw1000_tx_at(const uint8_t *buf, uint16_t len, uint64_t tx_time_dtu,
          * time the peer isn't expecting. */
         status = dwt_read32bitreg(SYS_STATUS_ID);
         dwt_write32bitreg(SYS_STATUS_ID, (uint32)SYS_STATUS_HPDWARN);
+        dwt_forcetrxoff();
         LOG_ERR("dw1000_tx_at() missed scheduled slot (status 0x%08X)",
                 (unsigned)status);
         return -EIO;
