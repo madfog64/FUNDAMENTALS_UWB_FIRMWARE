@@ -1,0 +1,28 @@
+# samples/twr_responder/Kconfig
+#
+# Kconfig root for the twr_responder sample.
+#
+# Zephyr's build system uses APPLICATION_SOURCE_DIR/Kconfig as the Kconfig root
+# when it exists. Because samples live outside the repo root, they need their
+# own Kconfig to source the DW1000 driver config at the correct relative path.
+
+source "$(ZEPHYR_BASE)/Kconfig"
+source "$(APPLICATION_SOURCE_DIR)/../../drivers/dw1000/Kconfig"
+
+config TWR_RESPONDER_SAMPLE_SELF_ADDR
+	hex "This device's 16-bit short address for the DS-TWR responder sample"
+	default 0x0002
+	range 0x0000 0xFFFD
+	help
+	  Placeholder short address the sample passes to
+	  twr_responder_run_once() as 'self_addr' -- the responder only answers
+	  a POLL whose destination address matches this value.
+
+	  Real slot/address assignment is the Aloha join/registration flow
+	  (UWB-9/10/11, out of scope for this sample and for UWB-232). Until
+	  that exists, bring-up testing hand-configures this value to match
+	  whatever address the DS-TWR initiator (anchor, or a throwaway
+	  initiator sketch on a second board) is told to POLL.
+
+	  Must not be UWB_ADDR_BROADCAST (0xFFFF) or UWB_ADDR_UNASSIGNED
+	  (0xFFFE, drivers/dw1000/uwb_frames.h) -- both are reserved.

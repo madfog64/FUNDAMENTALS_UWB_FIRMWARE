@@ -113,6 +113,14 @@ jobs:
   #     validation (frame type / PAN ID / destination / length) over the
   #     mocked dw1000_rx(), the -ETIMEDOUT/-EIO passthrough paths, and
   #     uwb_sync_parse()'s radio-free golden-value LE decode.
+  #   tests/twr_responder/  — twr.responder (UWB-232)
+  #     Compiles twr_responder.c against real dw1000_ranging.c + uwb_twr_codec.c
+  #     over an extended deca_driver mock (RX-queue, since one responder
+  #     attempt calls dw1000_rx() up to twice); asserts the POLL->RESPONSE
+  #     schedule (exchange_id, T2, T3=T2+delay), FINAL->T1/T4/T5/T6 capture,
+  #     the debug-range formula (uwb_twr_range_mm()) against a hand-calc
+  #     fixture, and the no-POLL/no-FINAL/foreign-frame/mismatched-exchange-id
+  #     paths.
   #
   # The 'unit_testing' platform has no Zephyr kernel — it links only the
   # ztest framework and the sources listed in each test's CMakeLists.txt.

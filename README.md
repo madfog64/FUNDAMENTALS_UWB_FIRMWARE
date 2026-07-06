@@ -155,6 +155,10 @@ Upcoming additions (later subissues):
 - `drivers/dw1000/dw1000_sync.{c,h}` — tag-side SYNC-frame RX + validate/parse
   (UWB-242); maintaining the tag cycle reference and the tracking-loop seam
   is sibling UWB-243, not yet implemented
+- `drivers/dw1000/twr_responder.{c,h}` — DS-TWR responder mode state machine
+  (UWB-232, Phase-1 calibration, ADR-001) + `samples/twr_responder/`;
+  two-mode (responder<->blinker) switch + registration/join is UWB-9/10/11,
+  not yet implemented
 - `src/uwb_blink.c` — TDoA blink application (UWB-92)
 - `boards/dwm1001.conf` / full custom board definition (if needed)
 - MCUboot OTA integration (ADR-008, UWB-94)
