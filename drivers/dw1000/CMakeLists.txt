@@ -39,6 +39,7 @@ if(CONFIG_DW1000)
     port/deca_port_stub.c      # __weak stubs — silently overridden by deca_port.c
     port/deca_port.c           # strong Zephyr SPI + GPIO port (UWB-93)
     dw1000_config.c            # PHY configuration layer (UWB-155)
+    dw1000_ranging.c           # RX-with-timestamp + scheduled TX (UWB-231)
     uwb_twr_codec.c            # DS-TWR frame build/parse codec (UWB-230)
   )
 

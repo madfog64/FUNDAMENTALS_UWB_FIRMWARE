@@ -103,6 +103,11 @@ jobs:
   #   tests/dw1000_devid/   — dw1000.devid  (UWB-94)
   #     Mocked readfromspi() returns DEV_ID bytes; asserts SPI header framing
   #     and decoded value 0xDECA0130.
+  #   tests/dw1000_ranging/ — dw1000.ranging (UWB-231)
+  #     Mocks the RX/TX register + timestamp API; asserts dw1000_rx()'s
+  #     good-frame/error/timeout handling, dw1000_tx_at()'s delayed-time
+  #     programming and HPDWARN error path, and dw1000_delayed_tx_time()'s
+  #     low-9-bit truncation.
   #
   # The 'unit_testing' platform has no Zephyr kernel — it links only the
   # ztest framework and the sources listed in each test's CMakeLists.txt.
