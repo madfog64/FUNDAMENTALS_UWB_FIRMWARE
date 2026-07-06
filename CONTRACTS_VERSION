@@ -12,11 +12,20 @@
 #
 # Files pinned here:
 #   drivers/dw1000/phy_config.h   <- contracts/uwb/phy_config.h @ v0.6
+#   drivers/dw1000/uwb_frames.h   <- contracts/uwb/uwb_frames.h @ UWB_PROTOCOL_VERSION 0.6
+#
+# drivers/dw1000/uwb_contract_version.h (local to this repo, not vendored)
+# enforces the uwb_frames.h pin at compile time: it #errors if
+# UWB_PROTOCOL_VERSION_MAJOR/MINOR ever drift from 0.6 without this file
+# being updated to match.
 #
 # To upgrade:
 #   1. Copy the new header(s) from the contracts repo.
 #   2. Update the version strings above.
 #   3. Verify that the Kconfig defaults in drivers/dw1000/Kconfig still match
 #      the UWB_PHY_* constants in the new phy_config.h.
-#   4. Run 'west build' and 'west twister -p unit_testing -T tests/'.
+#   4. Update the expected MAJOR/MINOR guard in
+#      drivers/dw1000/uwb_contract_version.h to match the new uwb_frames.h.
+#   5. Run 'west build' and 'west twister -p unit_testing -T tests/'.
 UWB_CONTRACTS_PHY_VERSION=0.6
+UWB_CONTRACTS_FRAMES_VERSION=0.6
