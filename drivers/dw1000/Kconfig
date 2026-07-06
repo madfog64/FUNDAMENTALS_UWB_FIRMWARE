@@ -311,4 +311,43 @@ config DW1000_ANTENNA_DELAY_RX
 	  The factory OTP value (when present) is also used for both TX and RX.
 	  Hardware-specific — replace after DS-TWR calibration (ADR-001).
 
+# ---------------------------------------------------------------------------
+# TWR responder reply delay — consumed by drivers/dw1000/dw1000_ranging.c
+# callers (the TWR responder state machine, UWB-232) via
+# dw1000_delayed_tx_time(anchor_ts, CONFIG_UWB_TWR_RESP_REPLY_DELAY_DTU) to
+# derive T3 = T2 + delay (DS-TWR terms: T2 = RX timestamp of the poll frame,
+# T3 = scheduled TX time of the response frame).
+#
+# Units: DW1000 time units (DTU). 1 DTU = 1 / (128 x 499.2 MHz) ~= 15.65 ps
+# (the same tick used for antenna delay and all DW1000 timestamps).
+# ---------------------------------------------------------------------------
+
+config UWB_TWR_RESP_REPLY_DELAY_DTU
+	int "TWR responder reply delay (DW1000 time units, DTU)"
+	default 127795200
+	range 0 2000000000
+	help
+	  Reply delay a TWR responder uses to compute T3 = T2 + delay, where T2
+	  is the RX timestamp of the received poll frame and T3 is the delayed
+	  TX time scheduled for the response frame (dw1000_delayed_tx_time() /
+	  dw1000_tx_at() in dw1000_ranging.c, UWB-231).
+
+	  Units: DW1000 time units (DTU). 1 DTU = 1 / (128 x 499.2 MHz)
+	  ~= 15.65 ps. There are exactly 63,897,600 DTU per millisecond
+	  (128 x 499.2 MHz x 1 ms).
+
+	  Default 127,795,200 DTU ~= 2 ms: long enough for the responder's
+	  firmware to receive/parse the poll frame and program a delayed TX
+	  (dwt_setdelayedtrxtime() + dwt_writetxdata() + dwt_writetxfctrl() +
+	  dwt_starttx()) before the scheduled instant arrives — a delay that is
+	  too short risks a missed slot (HPDWARN, surfaced as dw1000_tx_at()
+	  returning -EIO). At the same time it must stay well within the
+	  DW1000's 40-bit system time counter's full-scale range (~17.2 s) and
+	  the TDMA superframe's slot/guard budget (ADR-001) so the ranging
+	  exchange stays airtime-efficient.
+
+	  This is a starting point, not a calibrated value — tune empirically
+	  per platform (MCU clock speed, SPI throughput, ISR latency) once the
+	  responder state machine (UWB-232) is in place.
+
 endif # DW1000
