@@ -134,6 +134,18 @@ jobs:
   #     slot_duration_dtu, slot_idx>=slot_count and delay overflow (incl. the
   #     UINT32_MAX boundary) are rejected with the *_dtu out-param left
   #     untouched, and NULL rejection.
+  #   tests/tracking/       — dw1000.tracking (UWB-252)
+  #     Compiles uwb_tracking.c against real dw1000_sync.c, dw1000_ranging.c,
+  #     uwb_cycle_ref.c, uwb_slot_timing.c, and uwb_blink_codec.c over the
+  #     mocked deca_driver (single-shot mock, same as tests/dw1000_sync/);
+  #     asserts the never-synced/no-TX mandatory gate, a successful-sync
+  #     cycle building + scheduling the correct blink at the slot-timing
+  #     unit's computed time, blink_count incrementing only on an
+  #     actually-transmitted blink (carried LE in the payload), sync-loss
+  #     invalidation past CONFIG_UWB_SYNC_MAX_MISSED + re-acquisition on a
+  #     fresh SYNC, the missed-TX-window (-EIO/HPDWARN) path (no retry, no
+  #     blink_count increment), out-of-range slot config rejection, and NULL
+  #     argument rejection.
   #
   # The 'unit_testing' platform has no Zephyr kernel — it links only the
   # ztest framework and the sources listed in each test's CMakeLists.txt.

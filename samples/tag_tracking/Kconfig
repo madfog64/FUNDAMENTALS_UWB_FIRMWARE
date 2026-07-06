@@ -1,0 +1,86 @@
+# samples/tag_tracking/Kconfig
+#
+# Kconfig root for the tag_tracking sample.
+#
+# Zephyr's build system uses APPLICATION_SOURCE_DIR/Kconfig as the Kconfig root
+# when it exists. Because samples live outside the repo root, they need their
+# own Kconfig to source the DW1000 driver config at the correct relative path.
+
+source "$(ZEPHYR_BASE)/Kconfig"
+source "$(APPLICATION_SOURCE_DIR)/../../drivers/dw1000/Kconfig"
+
+config TAG_TRACKING_SAMPLE_SELF_ADDR
+	hex "This tag's 16-bit short address for the tag_tracking sample"
+	default 0x0003
+	range 0x0000 0xFFFD
+	help
+	  Placeholder short address embedded as this tag's blink src_addr.
+
+	  Real slot/address assignment is the Aloha join/registration flow
+	  (UWB-9/10/11, out of scope for this sample and for UWB-252). Until
+	  that exists, bring-up testing hand-configures this value.
+
+	  Must not be UWB_ADDR_BROADCAST (0xFFFF) or UWB_ADDR_UNASSIGNED
+	  (0xFFFE, drivers/dw1000/uwb_frames.h) -- both are reserved.
+
+config TAG_TRACKING_SAMPLE_SLOT_IDX
+	int "This tag's assigned TDMA slot index (0-based)"
+	default 0
+	range 0 255
+	help
+	  Placeholder TDMA slot index passed to uwb_tracking_run_cycle() via
+	  uwb_tracking_config_t::slot_idx.
+
+	  Real slot assignment is the Aloha join/registration flow (UWB-11,
+	  out of scope for this sample and for UWB-252). Until that exists,
+	  bring-up testing hand-configures this value to a slot that does not
+	  collide with any other tag under test.
+
+	  Must be strictly less than TAG_TRACKING_SAMPLE_SLOT_COUNT.
+
+config TAG_TRACKING_SAMPLE_SLOT_COUNT
+	int "Number of TDMA slots in the superframe"
+	default 24
+	range 1 255
+	help
+	  Placeholder superframe slot count passed to uwb_tracking_run_cycle()
+	  via uwb_tracking_config_t::slot_count.
+
+	  ADR-001 targets a ~24-slot superframe -- see uwb_slot_timing.h.
+	  Statically provisioned per installation (not transmitted in-frame,
+	  see the sync frame layout note in drivers/dw1000/uwb_frames.h).
+
+config TAG_TRACKING_SAMPLE_SLOT_DURATION_DTU
+	int "Per-slot duration, DW1000 time units (DTU), inclusive of guard band"
+	default 32000000
+	range 1 2000000000
+	help
+	  Placeholder per-slot duration passed to uwb_tracking_run_cycle() via
+	  uwb_tracking_config_t::slot_duration_dtu -- see uwb_slot_timing.h for
+	  the "guard time lives in slot_duration_dtu" rationale.
+
+	  Units: DW1000 time units (DTU). 1 DTU = 1 / (128 x 499.2 MHz)
+	  ~= 15.65 ps. Default 32,000,000 DTU ~= 0.5 ms, matching ADR-001's
+	  target superframe slot width.
+
+	  This is a starting point, not a calibrated value -- tune empirically
+	  once real superframe timing (UWB-9) and channel conditions are
+	  measured.
+
+config TAG_TRACKING_SAMPLE_SYNC_TIMEOUT_US
+	int "RX timeout waiting for the master's SYNC frame each cycle (microseconds)"
+	default 50000
+	range 0 4000000
+	help
+	  Hardware RX timeout (forwarded to dw1000_sync_rx() / dw1000_rx(),
+	  UWB-231/UWB-242) while this tag listens for the next cycle's SYNC
+	  frame.
+
+	  Units: microseconds. 0 disables the hardware timeout (the tag would
+	  then block indefinitely waiting for a SYNC instead of returning
+	  UWB_TRACKING_NO_VALID_REF / cycling) -- not recommended.
+
+	  Default 50,000 us (50 ms): comfortably longer than one superframe
+	  cycle at the slot/count defaults above, so a genuinely missed SYNC is
+	  distinguishable from one that simply has not arrived yet. Tune
+	  empirically once the real superframe cadence (UWB-9) is fixed.

@@ -46,6 +46,7 @@ if(CONFIG_DW1000)
     uwb_twr_codec.c            # DS-TWR frame build/parse codec (UWB-230)
     uwb_blink_codec.c          # TDoA tag-blink frame build/parse codec (UWB-250)
     twr_responder.c            # DS-TWR responder state machine (UWB-232)
+    uwb_tracking.c             # Tag-side per-cycle TDoA tracking loop (UWB-252)
   )
 
   # Include paths for compilation units inside this library.
