@@ -126,6 +126,14 @@ jobs:
   #     latest-edge tracking, on_miss tolerance + invalidation at
   #     CONFIG_UWB_SYNC_MAX_MISSED, re-acquisition after invalidation, and
   #     the cycle_seq discontinuity (still-accepted) / 16-bit wrap paths.
+  #   tests/slot_timing/    — uwb.slot_timing (UWB-251)
+  #     Links real dw1000_ranging.c (mocked deca_driver, unused by this
+  #     suite) to exercise dw1000_delayed_tx_time() for real; asserts
+  #     slot_idx=0 == the SYNC boundary, slot_idx=k feeds exactly
+  #     k*slot_duration_dtu, consecutive slots are separated by
+  #     slot_duration_dtu, slot_idx>=slot_count and delay overflow (incl. the
+  #     UINT32_MAX boundary) are rejected with the *_dtu out-param left
+  #     untouched, and NULL rejection.
   #
   # The 'unit_testing' platform has no Zephyr kernel — it links only the
   # ztest framework and the sources listed in each test's CMakeLists.txt.
