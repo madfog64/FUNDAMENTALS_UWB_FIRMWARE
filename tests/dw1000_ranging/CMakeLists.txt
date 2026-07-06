@@ -14,6 +14,11 @@ cmake_minimum_required(VERSION 3.20.0)
 #                             dwt_readrxtimestamp(), dwt_readtxtimestamp(),
 #                             dwt_setdelayedtrxtime(), dwt_writetxdata(),
 #                             dwt_writetxfctrl(), dwt_starttx()
+#   mock_log.c              — stubs z_log_minimal_printk() (same rationale and
+#                             pattern as tests/dw1000_config/src/mock_port.c):
+#                             the unit_testing defconfig enables CONFIG_LOG=y,
+#                             so dw1000_ranging.c's LOG_ERR()/LOG_DBG() calls
+#                             need this symbol at link time.
 #   test_dw1000_ranging.c   — ztest assertions
 #
 # Note: deca_device.c is intentionally NOT compiled here (same rationale as
@@ -32,6 +37,7 @@ set(DW1000_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../drivers/dw1000)
 target_sources(testbinary PRIVATE
     src/test_dw1000_ranging.c
     src/mock_deca_driver.c
+    src/mock_log.c
     ${DW1000_DIR}/dw1000_ranging.c
 )
 
