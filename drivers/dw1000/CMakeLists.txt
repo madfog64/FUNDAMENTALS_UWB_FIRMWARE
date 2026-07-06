@@ -40,6 +40,7 @@ if(CONFIG_DW1000)
     port/deca_port.c           # strong Zephyr SPI + GPIO port (UWB-93)
     dw1000_config.c            # PHY configuration layer (UWB-155)
     dw1000_ranging.c           # RX-with-timestamp + scheduled TX (UWB-231)
+    dw1000_sync.c              # Tag-side SYNC RX + validate/parse (UWB-242)
     uwb_twr_codec.c            # DS-TWR frame build/parse codec (UWB-230)
   )
 

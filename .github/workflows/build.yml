@@ -108,6 +108,11 @@ jobs:
   #     good-frame/error/timeout handling, dw1000_tx_at()'s delayed-time
   #     programming and HPDWARN error path, and dw1000_delayed_tx_time()'s
   #     low-9-bit truncation.
+  #   tests/dw1000_sync/    — dw1000.sync (UWB-242)
+  #     Reuses the dw1000_ranging mock; asserts dw1000_sync_rx()'s SYNC-frame
+  #     validation (frame type / PAN ID / destination / length) over the
+  #     mocked dw1000_rx(), the -ETIMEDOUT/-EIO passthrough paths, and
+  #     uwb_sync_parse()'s radio-free golden-value LE decode.
   #
   # The 'unit_testing' platform has no Zephyr kernel — it links only the
   # ztest framework and the sources listed in each test's CMakeLists.txt.
