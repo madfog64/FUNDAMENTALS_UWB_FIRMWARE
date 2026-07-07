@@ -51,7 +51,7 @@ permissions:
 jobs:
   west-build:
     name: west build (nrf52dk_nrf52832 / NCS v2.7.0)
-    runs-on: ubuntu-22.04
+    runs-on: self-hosted
 
     steps:
       # -----------------------------------------------------------------------
@@ -153,7 +153,7 @@ jobs:
   # ---------------------------------------------------------------------------
   twister:
     name: west twister (unit_testing / all suites)
-    runs-on: ubuntu-22.04
+    runs-on: self-hosted
 
     steps:
       - name: Checkout firmware source
