@@ -19,14 +19,22 @@
 #                                                                 32 KiB gives headroom over the
 #                                                                 ~24-28 KiB a minimal ECDSA-P256
 #                                                                 MCUboot build typically needs.
-#   mcuboot_primary /  0x08000 - 0x42000       0x3A000 (232 KiB) slot0 — the running app image
-#   mcuboot_primary_app                                          (this is where zephyr.signed.hex
-#                                                                 is written). Max signed app size
-#                                                                 is this partition minus the
-#                                                                 MCUboot image header (~0x200,
-#                                                                 accounted for automatically by
-#                                                                 the build's ROM start offset,
-#                                                                 not a separate partition here).
+#   mcuboot_primary    0x08000 - 0x42000       0x3A000 (232 KiB) slot0 — the container span PM
+#                                                                 uses for placement/overlap
+#                                                                 checks. It is the union of
+#                                                                 mcuboot_pad + app (below), not
+#                                                                 a separately-flashed region.
+#     mcuboot_pad      0x08000 - 0x08200       0x00200 (512 B)   Reserves room for the MCUboot
+#                                                                 image header (CONFIG_ROM_START_
+#                                                                 OFFSET = 0x200 on Cortex-M) so
+#                                                                 the app's vector table doesn't
+#                                                                 land under the header MCUboot
+#                                                                 writes ahead of it.
+#     app /            0x08200 - 0x42000       0x39E00 (~231.5   Where zephyr.signed.hex actually
+#     mcuboot_primary_app                       KiB)             lands and where the app's own
+#                                                                 ROM_START_OFFSET-adjusted vector
+#                                                                 table expects to run from. This
+#                                                                 is the real max signed app size.
 #   mcuboot_secondary  0x42000 - 0x7C000       0x3A000 (232 KiB) slot1 — receives the incoming
 #                                                                 update image before MCUboot
 #                                                                 overwrites slot0 with it.
@@ -59,14 +67,31 @@ mcuboot:
   size: 0x8000
   region: flash_primary
 
+mcuboot_pad:
+  address: 0x8000
+  size: 0x200
+  region: flash_primary
+
 mcuboot_primary:
   address: 0x8000
   size: 0x3a000
+  orig_span: &primary
+    - mcuboot_pad
+    - app
+  span: *primary
+  region: flash_primary
+
+app:
+  address: 0x8200
+  size: 0x39e00
   region: flash_primary
 
 mcuboot_primary_app:
-  address: 0x8000
-  size: 0x3a000
+  address: 0x8200
+  size: 0x39e00
+  orig_span: &primary_app
+    - app
+  span: *primary_app
   region: flash_primary
 
 mcuboot_secondary:
