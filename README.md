@@ -82,13 +82,33 @@ git clone https://github.com/madfog64/FUNDAMENTALS_UWB_FIRMWARE uwb_tag_firmware
 All commands assume you are in the `uwb_tag_firmware/` directory (or that
 `ZEPHYR_BASE` is exported).
 
-### nRF52 DK (primary target, maps to DWM1001 via board overlay)
+### nRF52 DK (primary target, maps to DWM1001 via board overlay) — sysbuild + MCUboot
 
 ```bash
-west build -b nrf52dk_nrf52832 .
+west build -b nrf52dk_nrf52832 . --sysbuild
 ```
 
-Produces `build/zephyr/zephyr.hex` and `build/zephyr/zephyr.elf`.
+`--sysbuild` is explicit above for clarity/CI determinism; on NCS >= v2.7,
+sysbuild is the default `west build` flow, so a plain `west build -b
+nrf52dk_nrf52832 .` also picks it up unless you've locally overridden
+`west config build.sysbuild false`.
+
+Sysbuild builds **two images** per `sysbuild.conf`
+(`SB_CONFIG_BOOTLOADER_MCUBOOT=y`): the `mcuboot` bootloader and this
+application, signed with the dev key at `keys/mcuboot_dev_key.pem`. See
+`pm_static.yml` for the static 512 KB partition layout (mcuboot / slot0 /
+slot1 / settings) and `sysbuild.conf` for the overwrite-only swap-mode
+rationale.
+
+Key outputs:
+
+| Path | What it is |
+|------|------------|
+| `build/mcuboot/zephyr/zephyr.hex` | The bootloader image (flash once). |
+| `build/uwb_tag_firmware/zephyr/zephyr.signed.hex` | Signed app image for slot0 — combined with mcuboot, this is what `west flash` programs. |
+| `build/uwb_tag_firmware/zephyr/zephyr.signed.bin` | Same, raw binary. |
+| `build/uwb_tag_firmware/zephyr/app_update.bin` | Signed update artifact for slot1 — what a future DFU transport (BLE/SMP, UWB-265) would push. |
+| `build/dfu_application.zip` | Multi-image DFU bundle (manifest + signed app image), produced automatically because MCUboot is enabled under sysbuild. |
 
 The file `boards/nrf52dk_nrf52832.overlay` is picked up automatically and
 configures SPI1 with the DWM1001's DW1000 pin mapping.
@@ -96,18 +116,22 @@ configures SPI1 with the DWM1001's DW1000 pin mapping.
 ### native_sim (headless / CI, no hardware required)
 
 ```bash
-west build -b native_sim .
+west build -b native_sim . --no-sysbuild
 ./build/zephyr/zephyr.exe
 ```
 
-`native_sim` runs the Zephyr image as a Linux process.  The boot banner is
-emitted to stdout via the UART console backend.  Useful for logging verification
-and unit tests (`west twister`) without hardware.
+`native_sim` runs the Zephyr image as a Linux process — there is no flash to
+partition and no MCUboot support for this "board", so `--no-sysbuild` is
+required here to bypass `sysbuild.conf` (which otherwise applies
+`SB_CONFIG_BOOTLOADER_MCUBOOT=y` unconditionally). Useful for logging
+verification and unit tests (`west twister`, which builds each `tests/`
+suite as its own app directory and is unaffected by the root
+`sysbuild.conf`) without hardware.
 
 ### Pristine rebuild
 
 ```bash
-west build -b nrf52dk_nrf52832 . --pristine
+west build -b nrf52dk_nrf52832 . --sysbuild --pristine
 ```
 
 ---
@@ -117,6 +141,10 @@ west build -b nrf52dk_nrf52832 . --pristine
 ```bash
 west flash                       # uses J-Link by default on nrf52dk
 ```
+
+Under sysbuild, `west flash` programs **both** images — `mcuboot` and the
+signed application (`zephyr.signed.hex`) — at their `pm_static.yml`
+addresses in a single invocation.
 
 ### Viewing logs
 
@@ -136,6 +164,52 @@ minicom -D /dev/ttyACM0 -b 115200
 
 ---
 
+## MCUboot & OTA
+
+MCUboot is enabled via NCS **sysbuild** (ADR-0040). See `sysbuild.conf` for
+the bootloader/swap-mode config and `pm_static.yml` for the static 512 KB
+partition table (both files carry the full rationale in their header
+comments). Summary:
+
+- **Bootloader:** `mcuboot` image, 32 KiB, built from the NCS-pinned
+  `bootloader/mcuboot` tree (via `west.yml`'s `import: true`).
+- **Partitions (static, `pm_static.yml`):** `mcuboot` (32 KiB) /
+  `mcuboot_primary` a.k.a. slot0 (232 KiB) / `mcuboot_secondary` a.k.a. slot1
+  (232 KiB) / `settings_storage` (16 KiB) — exact fit in 512 KB, no slack.
+- **Swap mode:** overwrite-only (no scratch partition) — see
+  `sysbuild.conf` for why this was chosen over swap-with-test on this
+  flash budget.
+- **Signing:** dev key at `keys/mcuboot_dev_key.pem` (ECDSA P-256,
+  **non-production**, see that file's header comment for the rotation
+  checklist before any field deployment).
+- **Not yet in scope** (later subissues per ADR-0040): the BLE/SMP-MCUmgr
+  DFU transport that actually delivers an update image to slot1 (UWB-265),
+  and image self-confirm / test-and-rollback / version reporting
+  (UWB-266). Today, `west flash` writes directly into slot0 via the debug
+  probe — there is no update path yet, only a bootable, signed image.
+
+### Hardware bring-up checklist (DWM1001, on-device — not verified by CI)
+
+CI verifies the build produces the bootloader + a correctly signed app
+image (see `.github/workflows/build.yml`). The following is **hardware-only**
+and has **not** been exercised on a physical board as part of this change —
+verify on a DWM1001 (or nrf52dk_nrf52832 J-Link target) before relying on it:
+
+1. `west build -b nrf52dk_nrf52832 . --sysbuild --pristine`
+2. `west flash` — programs both `mcuboot` and the signed app.
+3. Open RTT or UART (see "Viewing logs" above) *before* power-cycling/reset.
+4. Confirm the **MCUboot banner** appears first (e.g. `*** Booting MCUboot ***`
+   / `Starting bootloader` with the MCUboot build info), followed by the
+   application's own `UWB Tag Firmware starting — board: ...` boot banner
+   from `src/main.c` — i.e. the app is observed booting **through** MCUboot,
+   not flashed standalone at address 0.
+5. Confirm `west flash` did not report any partition-overflow / "image too
+   large for slot" error from imgtool during signing (would show up during
+   the `west build` step, not at flash time — flagging here as a first
+   sanity check while on the bench).
+
+---
+
 ## Project layout
 
 ```
@@ -143,6 +217,10 @@ uwb_tag_firmware/
 ├── west.yml                    # west manifest — pins NCS v2.7.0
 ├── CMakeLists.txt              # Zephyr application cmake
 ├── prj.conf                    # Kconfig fragment (logging, UART, RTT)
+├── sysbuild.conf                # sysbuild config — enables MCUboot + swap mode + signing key
+├── pm_static.yml                 # static flash partition layout (mcuboot/slot0/slot1/settings)
+├── keys/
+│   └── mcuboot_dev_key.pem      # MCUboot dev signing key (non-production, see header comment)
 ├── src/
 │   └── main.c                 # boot banner + idle loop
 ├── boards/
@@ -161,7 +239,9 @@ Upcoming additions (later subissues):
   not yet implemented
 - `src/uwb_blink.c` — TDoA blink application (UWB-92)
 - `boards/dwm1001.conf` / full custom board definition (if needed)
-- MCUboot OTA integration (ADR-008, UWB-94)
+- MCUboot bootloader + static partitions + dev signing key (ADR-0040,
+  UWB-264) — **done**, see "MCUboot & OTA" above. Still to come: BLE/SMP
+  MCUmgr DFU transport (UWB-265), image confirm/rollback/version (UWB-266).
 - `.github/workflows/` — CI build + twister (UWB-91 or dedicated ticket)
 
 ---

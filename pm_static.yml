@@ -1,0 +1,80 @@
+# Static Partition Manager layout — uwb_tag_firmware on nrf52dk_nrf52832
+# (DWM1001 module: nRF52832, 512 KB flash / 64 KB RAM).
+#
+# Why static (not the default dynamic PM layout): a moving auto-computed
+# layout is fine on the bench but breaks the ability to OTA-update
+# already-fielded tags the moment the app grows/shrinks and PM recomputes
+# offsets differently. ADR-0040 point 1 requires a layout "stable across
+# releases" — this file pins it once, deliberately, and any future resize
+# is a reviewed diff here rather than an implicit side effect of app size.
+#
+# ---------------------------------------------------------------------------
+# 512 KB (0x80000 bytes) flash budget:
+#
+#   Partition          Address range          Size              Notes
+#   -----------------  ---------------------  ----------------  ------------------------------
+#   mcuboot            0x00000 - 0x08000       0x08000 (32 KiB)  Bootloader image itself.
+#                                                                 Overwrite-only mode (no swap
+#                                                                 state machine) keeps this small;
+#                                                                 32 KiB gives headroom over the
+#                                                                 ~24-28 KiB a minimal ECDSA-P256
+#                                                                 MCUboot build typically needs.
+#   mcuboot_primary /  0x08000 - 0x42000       0x3A000 (232 KiB) slot0 — the running app image
+#   mcuboot_primary_app                                          (this is where zephyr.signed.hex
+#                                                                 is written). Max signed app size
+#                                                                 is this partition minus the
+#                                                                 MCUboot image header (~0x200,
+#                                                                 accounted for automatically by
+#                                                                 the build's ROM start offset,
+#                                                                 not a separate partition here).
+#   mcuboot_secondary  0x42000 - 0x7C000       0x3A000 (232 KiB) slot1 — receives the incoming
+#                                                                 update image before MCUboot
+#                                                                 overwrites slot0 with it.
+#                                                                 Same size as the primary slot
+#                                                                 (required: a slot0-sized image
+#                                                                 must fit whole in slot1).
+#   settings_storage   0x7C000 - 0x80000       0x04000 (16 KiB)  Reserved NVS/settings partition
+#                                                                 for app-side persistent config
+#                                                                 (not yet consumed by any driver
+#                                                                 as of UWB-264; reserved now so
+#                                                                 its address is stable once code
+#                                                                 does use it). 16 KiB = four
+#                                                                 4 KiB flash pages, comfortable
+#                                                                 for NVS wear-leveling with a
+#                                                                 small key/value set.
+#   -----------------  ---------------------  ----------------  ------------------------------
+#   Total                                      0x80000 (512 KiB) Exact fit, no slack.
+#
+# Headroom note: today's app (src/main.c skeleton + drivers/dw1000/) is a few
+# KB, far under the ~231.5 KiB (232 KiB - header) slot0 budget. That headroom
+# is expected to shrink substantially once UWB-265 adds the BLE peripheral +
+# MCUmgr/SMP stack (BLE host + controller alone commonly costs on the order
+# of 100+ KiB flash) — re-check this table against `west build` map/size
+# output when that lands, and revisit these partition sizes here (not by
+# letting dynamic PM silently reflow them) if slot0 gets tight.
+# ---------------------------------------------------------------------------
+
+mcuboot:
+  address: 0x0
+  size: 0x8000
+  region: flash_primary
+
+mcuboot_primary:
+  address: 0x8000
+  size: 0x3a000
+  region: flash_primary
+
+mcuboot_primary_app:
+  address: 0x8000
+  size: 0x3a000
+  region: flash_primary
+
+mcuboot_secondary:
+  address: 0x42000
+  size: 0x3a000
+  region: flash_primary
+
+settings_storage:
+  address: 0x7c000
+  size: 0x4000
+  region: flash_primary
