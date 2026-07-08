@@ -2,13 +2,20 @@
 #
 # Two jobs:
 #
-#   west-build  — cross-compiles for nrf52dk_nrf52832 (arm-zephyr-eabi).
-#                 Fails on any compile or link error.
+#   west-build  — cross-compiles for nrf52dk_nrf52832 (arm-zephyr-eabi) using
+#                 sysbuild (--sysbuild), which additionally builds the
+#                 MCUboot bootloader image and produces a signed application
+#                 image per sysbuild.conf / pm_static.yml (UWB-264, ADR-0040).
+#                 Fails on any compile, link, partition-overflow, or signing
+#                 error.
 #
 #   twister     — runs host-side ztests on the 'unit_testing' platform.
 #                 Scans all tests/ subdirectories (UWB-94: devid suite;
 #                 UWB-155: PHY config suite).
 #                 Fails if any test assertion fails (non-zero twister exit).
+#                 Unaffected by sysbuild/MCUboot: each test app under tests/
+#                 is its own build directory with no sysbuild.conf, and
+#                 twister targets the 'unit_testing' host platform directly.
 #
 # Both jobs use the same zephyrproject-rtos/action-zephyr-setup action,
 # which installs west, fetches NCS v2.7.0, auto-detects the Zephyr SDK
@@ -84,11 +91,38 @@ jobs:
           toolchains: arm-zephyr-eabi
 
       # -----------------------------------------------------------------------
-      # 3. Build.  Fails the job on any compile or link error.
-      #    Build artefacts land in GITHUB_WORKSPACE/build/.
+      # 3. Build.  Fails the job on any compile, link, partition-overflow, or
+      #    image-signing error.
+      #
+      #    --sysbuild is explicit (not relying on the NCS v2.7 sysbuild-by-
+      #    default behaviour) so CI is deterministic regardless of any local
+      #    `west config` default. This builds both the `mcuboot` bootloader
+      #    image and the signed application image (sysbuild.conf +
+      #    pm_static.yml, UWB-264 / ADR-0040).
+      #    Build artefacts land in GITHUB_WORKSPACE/build/ — notably
+      #    build/mcuboot/zephyr/zephyr.hex, build/uwb_tag_firmware/zephyr/
+      #    zephyr.signed.hex, and build/dfu_application.zip.
       # -----------------------------------------------------------------------
-      - name: Build firmware
-        run: west build -b nrf52dk_nrf52832 uwb_tag_firmware
+      - name: Build firmware (sysbuild + MCUboot)
+        run: west build -b nrf52dk_nrf52832 uwb_tag_firmware --sysbuild
+
+      # -----------------------------------------------------------------------
+      # 4. Upload the signed app image + DFU bundle so a PR reviewer can grab
+      #    the exact artefact CI produced (e.g. to sanity-check size against
+      #    pm_static.yml's slot0 budget) without a local NCS toolchain.
+      # -----------------------------------------------------------------------
+      - name: Upload signed firmware images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uwb-tag-firmware-signed
+          path: |
+            build/mcuboot/zephyr/zephyr.hex
+            build/uwb_tag_firmware/zephyr/zephyr.signed.hex
+            build/uwb_tag_firmware/zephyr/zephyr.signed.bin
+            build/uwb_tag_firmware/zephyr/app_update.bin
+            build/dfu_application.zip
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
   # Job: twister — host-side ztest execution (unit_testing platform)
