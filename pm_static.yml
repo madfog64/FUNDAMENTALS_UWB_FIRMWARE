@@ -53,13 +53,15 @@
 #   -----------------  ---------------------  ----------------  ------------------------------
 #   Total                                      0x80000 (512 KiB) Exact fit, no slack.
 #
-# Headroom note: today's app (src/main.c skeleton + drivers/dw1000/) is a few
-# KB, far under the ~231.5 KiB (232 KiB - header) slot0 budget. That headroom
-# is expected to shrink substantially once UWB-265 adds the BLE peripheral +
-# MCUmgr/SMP stack (BLE host + controller alone commonly costs on the order
-# of 100+ KiB flash) — re-check this table against `west build` map/size
-# output when that lands, and revisit these partition sizes here (not by
-# letting dynamic PM silently reflow them) if slot0 gets tight.
+# Headroom note: UWB-265 added the BLE peripheral + MCUmgr/SMP stack
+# (prj.conf) on top of the src/main.c skeleton + drivers/dw1000/ — BLE host +
+# controller + MCUmgr typically cost on the order of 100+ KiB flash, which is
+# expected to eat significantly into the ~231.5 KiB (232 KiB - header) slot0
+# budget. This subissue could not run the full sysbuild build locally (see
+# UWB-265 PR — build-verify deferred to CI/dispatcher); **re-check this
+# table against actual `west build` map/size output** and revisit these
+# partition sizes here (not by letting dynamic PM silently reflow them) if
+# slot0 is tight or overflows.
 # ---------------------------------------------------------------------------
 
 mcuboot:
