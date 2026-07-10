@@ -182,14 +182,11 @@ comments). Summary:
 - **Signing:** dev key at `keys/mcuboot_dev_key.pem` (ECDSA P-256,
   **non-production**, see that file's header comment for the rotation
   checklist before any field deployment).
-- **DFU transport — BLE/SMP/MCUmgr (UWB-265, this subissue, done):** see
-  "BLE / SMP-MCUmgr DFU transport" below.
-- **Not yet in scope** (later subissue per ADR-0040): image self-confirm /
-  test-and-rollback / running-version reporting on the app side (UWB-266).
-  Today an uploaded image can be tested (`image test`) and will boot, but
-  nothing in `src/main.c` calls `boot_write_img_confirmed()` — without
-  UWB-266, MCUboot's overwrite-only revert bookkeeping is the only safety
-  net on a bad image. A CI-built signed update artifact and the full
+- **DFU transport — BLE/SMP/MCUmgr (UWB-265, done):** see "BLE / SMP-MCUmgr
+  DFU transport" below.
+- **Image self-confirm, health gate & version reporting (UWB-266, done):**
+  see "Image self-confirm, health gate & version reporting" below.
+- **Not yet in scope:** a CI-built signed update artifact and the full
   laptop-side DFU procedure are documented in UWB-267.
 
 ### BLE / SMP-MCUmgr DFU transport (UWB-265)
@@ -208,11 +205,11 @@ on desktop/mobile) can drive:
   is read from the MCUboot image header via `image list`, not a separate
   `os_mgmt` field.
 
-`src/main.c` only brings up the BLE stack and starts/re-arms advertising on
-connect/disconnect — the `img_mgmt`/`os_mgmt` command handlers themselves are
-registered automatically by `CONFIG_MCUMGR_GRP_IMG` / `CONFIG_MCUMGR_GRP_OS`
-(no application code calls them). There is **no confirm/rollback logic
-here** — see UWB-266.
+`src/main.c` brings up the BLE stack and starts/re-arms advertising on
+connect/disconnect, and runs the UWB-266 self-check/confirm gate — the
+`img_mgmt`/`os_mgmt` command handlers themselves are registered
+automatically by `CONFIG_MCUMGR_GRP_IMG` / `CONFIG_MCUMGR_GRP_OS` (no
+application code calls them).
 
 The link is currently **unauthenticated** (`CONFIG_MCUMGR_TRANSPORT_BT_AUTHEN=n`)
 — acceptable for a bench-stage build (ADR-0040 defers secure-boot/production
@@ -231,6 +228,81 @@ enforced in code; there is no mutual-exclusion mechanism between "tag is
 blinking in its TDMA slot" and "tag is accepting a BLE image upload" as of
 this subissue. Solving that (e.g. refusing/pausing uploads while joined to a
 tracking cycle) is a follow-on concern, not a UWB-265 requirement.
+
+### Image self-confirm, health gate & version reporting (UWB-266)
+
+`src/main.c` calls `confirm_image_if_healthy()` early in `main()` (before BLE
+bring-up). It skips the check entirely if `boot_is_img_confirmed()` already
+reports confirmed (true on a fresh `west flash` — MCUboot treats a
+never-swapped, "preprogrammed" image as confirmed by definition — and true
+again on every subsequent warm boot of an already-confirmed image). Otherwise
+it runs the boot self-check gate and, only on success, calls
+`boot_write_img_confirmed()` (`<zephyr/dfu/mcuboot.h>`) to mark the image
+permanent.
+
+- **The gate (`src/image_health.h` / `.c` / `_zephyr.c`):** deliberately
+  small and explicit per UWB-266 scope — "core subsystems initialised", not
+  full UWB/DW1000 bring-up. It checks the kernel is running, logging is up,
+  and the DW1000 SPI bus + reset/IRQ GPIO controllers report
+  `device_is_ready()`/`gpio_is_ready_dt()` (a wiring/presence check only —
+  no SPI transaction to the DW1000 chip itself, no `dwt_initialise()`, no
+  register read). A `TODO` in both files marks where an actual "DW1000
+  responds" check hooks in once `dw1000_port_init()`/`dw1000_configure()`
+  are wired into `src/main.c` (UWB-91/UWB-92 follow-on) — not done here per
+  the ticket's explicit "do NOT block on full UWB bring-up."
+  - The decision logic (`image_health_evaluate()`, `image_health.c`) is
+    pure — no Zephyr includes — and is unit-tested in `tests/image_health`
+    (ztest/`unit_testing`, host-run). The check-gathering side
+    (`image_health_run_checks()`, `image_health_zephyr.c`) is
+    Zephyr/devicetree-only and is not part of that host test; it is
+    exercised by the real board build and the on-device checklist below.
+- **On failure:** the gate logs an error and leaves the image unconfirmed —
+  it deliberately does **not** force a reboot. See the honesty note below on
+  why a reboot would not help and could actively hurt (bootloop with no
+  recovery path).
+- **Version (single source):** the top-level `VERSION` file is now the one
+  source of the app's image version. Zephyr auto-generates
+  `app_version.h` from it (`APP_VERSION_STRING` etc., see
+  `zephyr/doc/build/version/index.rst`), which `src/main.c` logs in the boot
+  banner (`UWB Tag Firmware starting — board: ..., version: ..., built:
+  ...`). `CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION` (`zephyr/modules/Kconfig.mcuboot`)
+  defaults to the same `VERSION` file whenever it exists (no `prj.conf`
+  override added here, on purpose — a second, hand-set value would be a
+  second source of truth and could drift from the file). That is also the
+  version imgtool signs into the MCUboot image header, which is what
+  `mcumgr image list` reports over SMP (`os_mgmt`/`img_mgmt`, UWB-265) — no
+  extra application code is needed for that half, it falls out of signing
+  from the same `VERSION` file.
+
+**Honesty note — what "test-and-rollback" actually means here:** MCUboot is
+configured `SB_CONFIG_MCUBOOT_MODE_OVERWRITE_ONLY=y` (UWB-264,
+`sysbuild.conf`). In this mode MCUboot has **no test/revert state machine at
+all** — verified against this repo's pinned NCS v2.7.0 MCUboot source
+(`bootloader/mcuboot/boot/bootutil/src/loader.c`,
+`.../bootutil_misc.c`): `boot_perform_update()` unconditionally erases the
+primary slot and overwrites it with the secondary slot's image
+(`boot_copy_image()`), and the `image_ok`/`copy_done` trailer bookkeeping
+that swap-with-test modes rely on for "revert unless confirmed" is compiled
+out entirely under `#ifndef MCUBOOT_OVERWRITE_ONLY`. Once an image has been
+overwritten into the primary slot, there is no backup left anywhere to
+revert to. `sysbuild.conf`'s header comment previously claimed otherwise
+("overwrite-only mode still reverts... via its own boot-count/confirm
+bookkeeping") — that was incorrect and has been corrected in that file as
+part of UWB-266.
+
+Practical consequence: `boot_write_img_confirmed()` in this configuration
+cannot make MCUboot roll back a bad-but-bootable image — there is nothing to
+roll back to. What UWB-266 actually delivers is:
+  - A real (if narrow) health gate that only confirms a genuinely-booted,
+    minimally-sane image — a truly broken image (crash/hang before reaching
+    the gate) never confirms, which is visible indefinitely over `mcumgr
+    image list` as `confirmed: false`.
+  - No harmful "fix" attempt on failure: since there is no previous image to
+    fall back to, forcing a reboot on gate failure would only bootloop the
+    same bad image with no path to recovery. The only real recovery for a
+    bad-but-bootable image is uploading a fresh known-good image over
+    BLE/SMP (UWB-265) — which stays reachable precisely because the gate
+    does not reboot.
 
 ### Hardware bring-up checklist (DWM1001, on-device — not verified by CI)
 
@@ -282,6 +354,39 @@ verify on a DWM1001 (or nrf52dk_nrf52832 J-Link target) before relying on it:
     upload build/uwb_tag_firmware/zephyr/zephyr.signed.bin` and confirm
     `image list` now shows the uploaded image in `image=0 slot=1`.
 
+**Self-confirm, health gate & version (UWB-266, new):**
+
+11. Confirm step 4's boot banner now also prints a `version:` field matching
+    the `VERSION` file (e.g. `version: 0.1.0`), and that `mcumgr image list`
+    (step 8) reports the same version string against `image=0 slot=0`.
+12. On the *first* boot after `west flash` (no upgrade has happened yet),
+    confirm the log does **not** print `Boot self-check FAILED` or `Boot
+    self-check passed` — only `Image already confirmed — skipping
+    self-check` at `DBG` level. This is expected: MCUboot treats a
+    never-swapped image as confirmed from the start (see "Image
+    self-confirm..." above), so the gate is a no-op here by design.
+13. **Exercise the gate on a real upgrade cycle** — build a second image with
+    a bumped `VERSION` (e.g. `VERSION_TWEAK`), `image upload` it (step 10),
+    then `mcumgr ... image test <hash>` (marks it pending, one-time boot) and
+    reset the device. Confirm the log now shows `Boot self-check passed —
+    image confirmed permanent`, and `mcumgr image list` reports the new
+    image as `active confirmed` (not just `active`).
+14. **Confirm persistence across a power cycle** (not just a soft reset): with
+    step 13's image now confirmed, fully power-cycle the board (not just
+    `reset`) and confirm it boots the same (new) image and `image list`
+    still reports it `confirmed`.
+15. **Deliberately-failing image, and the honest limitation:** temporarily
+    force `image_health_evaluate()` (`src/image_health.c`) to always return
+    `IMAGE_HEALTH_FAIL`, build, `image upload` + `image test` it, and reset.
+    Confirm the log shows `Boot self-check FAILED — image left unconfirmed`
+    and `mcumgr image list` reports it `active` but **not** `confirmed` —
+    indefinitely, across further resets. **Do not expect a revert to the
+    previous image** — per the "Honesty note" above, this repo's
+    overwrite-only MCUboot mode has no revert mechanism; the failing image
+    keeps booting (in a degraded, unconfirmed state) until a corrected image
+    is uploaded and confirmed via steps 10/13. Revert this temporary change
+    before merging/flashing a real image.
+
 ---
 
 ## Project layout
@@ -293,10 +398,16 @@ uwb_tag_firmware/
 ├── prj.conf                    # Kconfig fragment (logging, UART, RTT, BLE + MCUmgr/SMP)
 ├── sysbuild.conf                # sysbuild config — enables MCUboot + swap mode + signing key
 ├── pm_static.yml                 # static flash partition layout (mcuboot/slot0/slot1/settings)
+├── VERSION                      # single source of the app image version (UWB-266)
 ├── keys/
 │   └── mcuboot_dev_key.pem      # MCUboot dev signing key (non-production, see header comment)
 ├── src/
-│   └── main.c                 # boot banner + BLE/SMP-MCUmgr bring-up + idle loop
+│   ├── main.c                  # boot banner + self-check/confirm gate + BLE/SMP-MCUmgr bring-up
+│   ├── image_health.h          # health-gate types + evaluate()/run_checks() API (UWB-266)
+│   ├── image_health.c          # pure gate decision logic (host-testable, UWB-266)
+│   └── image_health_zephyr.c   # Zephyr-side check gathering (UWB-266)
+├── tests/
+│   └── image_health/           # ztest host suite for image_health_evaluate() (UWB-266)
 ├── boards/
 │   └── nrf52dk_nrf52832.overlay  # DWM1001 SPI1/GPIO pin mapping for DW1000
 └── README.md                   # this file
@@ -316,9 +427,11 @@ Upcoming additions (later subissues):
 - MCUboot bootloader + static partitions + dev signing key (ADR-0040,
   UWB-264) — **done**, see "MCUboot & OTA" above.
 - BLE peripheral + SMP/MCUmgr DFU transport (ADR-0040, UWB-265) — **done**,
-  see "BLE / SMP-MCUmgr DFU transport" above. Still to come: image
-  confirm/rollback/version-set on the app side (UWB-266) and the CI signed
-  artifact + full laptop DFU procedure docs (UWB-267).
+  see "BLE / SMP-MCUmgr DFU transport" above.
+- Image self-confirm, health gate & version reporting (ADR-0040, UWB-266) —
+  **done**, see "Image self-confirm, health gate & version reporting" above.
+  Still to come: the CI signed artifact + full laptop DFU procedure docs
+  (UWB-267).
 - `.github/workflows/` — CI build + twister (UWB-91 or dedicated ticket)
 
 ---
