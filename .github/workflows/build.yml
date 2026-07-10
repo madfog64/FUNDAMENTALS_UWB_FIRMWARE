@@ -1,13 +1,22 @@
 # Firmware Build CI
 #
-# Two jobs:
+# Three jobs:
 #
 #   west-build  — cross-compiles for nrf52dk_nrf52832 (arm-zephyr-eabi) using
 #                 sysbuild (--sysbuild), which additionally builds the
 #                 MCUboot bootloader image and produces a signed application
 #                 image per sysbuild.conf / pm_static.yml (UWB-264, ADR-0040).
 #                 Fails on any compile, link, partition-overflow, or signing
-#                 error.
+#                 error. This is the default (bench/debug) build profile —
+#                 RTT + UART logging and always-on BLE advertising, CONFIG_PM
+#                 baseline settings unchanged.
+#
+#   west-build-low-power — the same target/sysbuild flow with
+#                 -DCONFIG_UWB_TAG_LOW_POWER=y (ADR-0046, UWB-314): verifies
+#                 the field/low-power profile (overlay-lowpower.conf, layered
+#                 on top of prj.conf via CMakeLists.txt's EXTRA_CONF_FILE)
+#                 also compiles, links, and signs cleanly. See README.md
+#                 "Power-management profile" for what this flag changes.
 #
 #   twister     — runs host-side ztests on the 'unit_testing' platform.
 #                 Scans all tests/ subdirectories (UWB-94: devid suite;
@@ -125,6 +134,49 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: uwb-tag-firmware-signed
+          path: |
+            build/mcuboot/zephyr/zephyr.hex
+            build/uwb_tag_firmware/zephyr/zephyr.signed.hex
+            build/uwb_tag_firmware/zephyr/zephyr.signed.bin
+            build/dfu_application.zip
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Job: west-build-low-power — same target/sysbuild flow as west-build, with
+  # the ADR-0046 low-power tag profile enabled (CONFIG_UWB_TAG_LOW_POWER=y,
+  # UWB-314). Verifies the field-build variant (overlay-lowpower.conf: drops
+  # the RTT/UART log backends + UART console, lowers the default log level,
+  # enables CONFIG_PM_DEVICE) also compiles, links, and signs cleanly.
+  # Independent job (not a matrix with west-build) so a failure here is
+  # clearly attributable to the low-power profile specifically, and both
+  # variants' signed images are uploaded as separate artefacts.
+  # ---------------------------------------------------------------------------
+  west-build-low-power:
+    name: west build (nrf52dk_nrf52832 / low-power profile, ADR-0046)
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout firmware source
+        uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938  # v4.2.0
+        with:
+          path: uwb_tag_firmware
+
+      - name: Set up Zephyr project (west + NCS + Zephyr SDK)
+        uses: zephyrproject-rtos/action-zephyr-setup@5ec39f5cba83346d83a836dfed1524270c660e28  # v1.0.14
+        with:
+          app-path: uwb_tag_firmware
+          toolchains: arm-zephyr-eabi
+
+      - name: Build firmware (sysbuild + MCUboot, low-power profile)
+        run: >
+          west build -b nrf52dk_nrf52832 uwb_tag_firmware --sysbuild --
+          -DCONFIG_UWB_TAG_LOW_POWER=y
+
+      - name: Upload signed firmware images (low-power profile)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uwb-tag-firmware-signed-low-power
           path: |
             build/mcuboot/zephyr/zephyr.hex
             build/uwb_tag_firmware/zephyr/zephyr.signed.hex
