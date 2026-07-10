@@ -1,0 +1,113 @@
+# samples/tag_join_track/Kconfig
+#
+# Kconfig root for the tag_join_track sample.
+#
+# Zephyr's build system uses APPLICATION_SOURCE_DIR/Kconfig as the Kconfig root
+# when it exists. Because samples live outside the repo root, they need their
+# own Kconfig to source the DW1000 driver config at the correct relative path.
+#
+# Deliberately NO short_addr / slot_idx / slot_count / slot_duration_dtu
+# options here (contrast samples/tag_tracking/Kconfig's
+# TAG_TRACKING_SAMPLE_SELF_ADDR / _SLOT_IDX / _SLOT_COUNT /
+# _SLOT_DURATION_DTU placeholders) -- this sample's whole point (UWB-263) is
+# that those values come ONLY from the adopted SLOT_ASSIGNMENT at runtime,
+# never from injected/compile-time config.
+
+source "$(ZEPHYR_BASE)/Kconfig"
+source "$(APPLICATION_SOURCE_DIR)/../../drivers/dw1000/Kconfig"
+
+config TAG_JOIN_TRACK_SAMPLE_REFERENCE_ROLE
+	bool "This tag is a Phase-1 calibration reference tag"
+	default n
+	help
+	  Sets the UWB_JOIN_CAP_ROLE_REFERENCE capability bit
+	  (drivers/dw1000/uwb_frames.h) in every JOIN_REQUEST this tag sends,
+	  per ADR-0039. Purely informational to the registrar; this sample's
+	  own join -> track behaviour does not change based on this flag.
+
+config TAG_JOIN_TRACK_SAMPLE_GATE_CYCLES
+	int "Bounded network-alive gate window before the first JOIN_REQUEST (superframe cycles)"
+	default 0
+	range 0 255
+	help
+	  Forwarded to uwb_join_config_t::gate_cycles (drivers/dw1000/uwb_join.h).
+	  0 disables the gate -- the tag issues its first JOIN_REQUEST
+	  immediately rather than first confirming a live network via >=1
+	  SYNC frame. See uwb_join.h's GATE phase doc for the rationale.
+
+config TAG_JOIN_TRACK_SAMPLE_AWAIT_CYCLES
+	int "Cycles to wait for a matching SLOT_ASSIGNMENT per join attempt"
+	default 4
+	range 1 255
+	help
+	  Forwarded to uwb_join_config_t::await_cycles. ADR-0039
+	  contract-suggested range: 3-5 superframe cycles.
+
+config TAG_JOIN_TRACK_SAMPLE_BACKOFF_BASE_CYCLES
+	int "Join retry backoff window at attempt 0 (superframe cycles)"
+	default 2
+	range 1 65535
+	help
+	  Forwarded to uwb_join_config_t::backoff_base_cycles (W_base in
+	  ADR-0039's truncated-exponential backoff: window = min(W_base
+	  << attempt, W_max)).
+
+config TAG_JOIN_TRACK_SAMPLE_BACKOFF_MAX_CYCLES
+	int "Join retry backoff window growth cap (superframe cycles)"
+	default 64
+	range 1 65535
+	help
+	  Forwarded to uwb_join_config_t::backoff_max_cycles (W_max in
+	  ADR-0039's truncated-exponential backoff).
+
+config TAG_JOIN_TRACK_SAMPLE_MAX_ATTEMPTS
+	int "Give-up-and-restart cap on consecutive failed join attempts (0 = unlimited)"
+	default 0
+	range 0 65535
+	help
+	  Forwarded to uwb_join_config_t::max_attempts. 0 means the tag
+	  never gives up -- it keeps retrying (with the backoff window
+	  capped at _BACKOFF_MAX_CYCLES) until it joins. A non-zero value
+	  causes a full restart (attempt counter reset, back to the gate /
+	  first request) after this many consecutive failed attempts -- see
+	  uwb_join.h's "give-up-and-restart" doc.
+
+config TAG_JOIN_TRACK_SAMPLE_SYNC_TIMEOUT_US
+	int "RX timeout for the join gate's SYNC listen, and for each tracking cycle's SYNC listen (microseconds)"
+	default 50000
+	range 0 4000000
+	help
+	  Forwarded to uwb_join_config_t::sync_timeout_us (join gate phase)
+	  AND uwb_join_track_config_t::tracking_sync_timeout_us (every
+	  tracking-phase cycle, once joined) -- both listens are for the
+	  same master SYNC frame, so this sample uses one knob for both.
+
+	  Units: microseconds. Default 50,000 us (50 ms): comfortably longer
+	  than one superframe cycle at typical slot/count values, matching
+	  samples/tag_tracking's CONFIG_TAG_TRACKING_SAMPLE_SYNC_TIMEOUT_US
+	  default. Tune empirically once the real superframe cadence (UWB-9)
+	  is fixed.
+
+config TAG_JOIN_TRACK_SAMPLE_ASSIGNMENT_TIMEOUT_US
+	int "RX timeout waiting for a SLOT_ASSIGNMENT within each join AWAIT window (microseconds)"
+	default 50000
+	range 0 4000000
+	help
+	  Forwarded to uwb_join_config_t::assignment_timeout_us.
+
+config TAG_JOIN_TRACK_SAMPLE_TX_MARGIN_DTU
+	int "Margin added to 'now' when scheduling a JOIN_REQUEST's delayed TX (DW1000 time units, DTU)"
+	default 127795200
+	range 0 2000000000
+	help
+	  Forwarded to uwb_join_config_t::tx_margin_dtu -- see uwb_join.h's
+	  "Injected seams" section for why a JOIN_REQUEST still goes through
+	  dw1000_delayed_tx_time(now_get(), tx_margin_dtu) (dw1000_tx_at()
+	  supports delayed TX only, no "transmit immediately" primitive).
+
+	  Units: DW1000 time units (DTU). 1 DTU = 1 / (128 x 499.2 MHz)
+	  ~= 15.65 ps. Default 127,795,200 DTU ~= 2 ms, the same order of
+	  magnitude as CONFIG_UWB_TWR_RESP_REPLY_DELAY_DTU
+	  (drivers/dw1000/Kconfig) -- comfortably longer than the CPU
+	  processing time between reading "now" and the DW1000 actually
+	  arming the scheduled TX.
