@@ -1,17 +1,29 @@
 /*
  * UWB Tag Firmware — main entry point
  *
- * Skeleton: logs a boot banner, brings up BLE + the MCUmgr SMP server
- * (UWB-265, ADR-0040), and idles. All UWB/DW1000 functionality is added in
- * subsequent subissues (UWB-91 deca_driver port, UWB-92 blink app).
+ * Skeleton: logs a boot banner (including the image version, UWB-266), runs
+ * the boot-time self-check gate and confirms the image to MCUboot on
+ * success (UWB-266, ADR-0040), brings up BLE + the MCUmgr SMP server
+ * (UWB-265, ADR-0040), and idles. All UWB/DW1000 functionality beyond the
+ * self-check's presence/wiring probe is added in subsequent subissues
+ * (UWB-91 deca_driver port, UWB-92 blink app).
  *
- * BLE/MCUmgr scope for this subissue is deliberately minimal: initialise the
- * BLE peripheral and start connectable advertising so an SMP client
- * (mcumgr CLI / nRF Connect Device Manager) can find and connect to the tag
- * and drive img_mgmt/os_mgmt commands (the handlers themselves are
- * registered automatically by CONFIG_MCUMGR_GRP_IMG / CONFIG_MCUMGR_GRP_OS,
- * no application code needed). Image self-confirm / test-and-rollback /
- * version-set logic is explicitly NOT here — that is UWB-266.
+ * BLE/MCUmgr scope is deliberately minimal: initialise the BLE peripheral and
+ * start connectable advertising so an SMP client (mcumgr CLI / nRF Connect
+ * Device Manager) can find and connect to the tag and drive
+ * img_mgmt/os_mgmt commands (the handlers themselves are registered
+ * automatically by CONFIG_MCUMGR_GRP_IMG / CONFIG_MCUMGR_GRP_OS, no
+ * application code needed).
+ *
+ * Image self-confirm / test-and-rollback / version-set (UWB-266):
+ *   See image_health.h for the gate itself and the honest writeup of what
+ *   "test-and-rollback" actually means under this repo's MCUboot
+ *   overwrite-only swap mode (short version: MCUboot itself cannot revert a
+ *   bad-but-bootable image in this configuration — see README.md "MCUboot &
+ *   OTA"). The gate below is deliberately conservative: on failure it logs
+ *   and leaves the image unconfirmed, but does NOT force a reboot (there is
+ *   no previous image to fall back to, so a reboot loop would only make
+ *   things worse and could brick the ability to re-flash over BLE/SMP).
  *
  * Build target: nrf52dk_nrf52832 (DWM1001 module, configured via board overlay)
  */
@@ -20,8 +32,47 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
+#include <zephyr/dfu/mcuboot.h>
+
+#include <app_version.h>
+
+#include "image_health.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
+
+/*
+ * Runs the UWB-266 boot self-check gate and, on success, marks the running
+ * image permanent via boot_write_img_confirmed(). Idempotent: does nothing
+ * if the image is already confirmed (e.g. a normal warm reset of an
+ * already-confirmed image, not a fresh update).
+ *
+ * Called early in main(), before BLE/SMP bring-up, so a broken image is
+ * caught (and stays unconfirmed) as soon as possible after boot — see
+ * image_health.h for why this repo's overwrite-only MCUboot mode means
+ * "unconfirmed" is observability (mcumgr `image list` -> confirmed: false),
+ * not an automatic revert trigger.
+ */
+static void confirm_image_if_healthy(void)
+{
+	if (boot_is_img_confirmed()) {
+		LOG_DBG("Image already confirmed — skipping self-check");
+		return;
+	}
+
+	if (image_health_run_checks() != IMAGE_HEALTH_OK) {
+		LOG_ERR("Boot self-check FAILED — image left unconfirmed");
+		return;
+	}
+
+	int rc = boot_write_img_confirmed();
+
+	if (rc != 0) {
+		LOG_ERR("boot_write_img_confirmed() failed (err %d)", rc);
+		return;
+	}
+
+	LOG_INF("Boot self-check passed — image confirmed permanent");
+}
 
 /* Advertising is (re)started from a work item so it can be re-armed from the
  * disconnect callback (which runs in the BT RX thread, not a context that
@@ -96,8 +147,15 @@ int main(void)
 {
 	int err;
 
-	LOG_INF("UWB Tag Firmware starting — board: %s, built: %s %s",
-		CONFIG_BOARD, __DATE__, __TIME__);
+	LOG_INF("UWB Tag Firmware starting — board: %s, version: %s, built: %s %s",
+		CONFIG_BOARD, APP_VERSION_STRING, __DATE__, __TIME__);
+
+	/*
+	 * Run the self-check gate as early as practical (before BLE/SMP
+	 * bring-up) so a broken image is caught, and stays unconfirmed, as
+	 * soon as possible after boot (UWB-266).
+	 */
+	confirm_image_if_healthy();
 
 	k_work_init(&advertise_work, advertise);
 
