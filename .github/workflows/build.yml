@@ -107,9 +107,18 @@ jobs:
         run: west build -b nrf52dk_nrf52832 uwb_tag_firmware --sysbuild
 
       # -----------------------------------------------------------------------
-      # 4. Upload the signed app image + DFU bundle so a PR reviewer can grab
-      #    the exact artefact CI produced (e.g. to sanity-check size against
-      #    pm_static.yml's slot0 budget) without a local NCS toolchain.
+      # 4. Upload the signed app image + DFU bundle so a PR reviewer (or an
+      #    operator doing a BLE DFU, see docs/ota.md) can grab the exact
+      #    artefact CI produced without a local NCS toolchain.
+      #
+      #    zephyr.signed.bin is the file `mcumgr image upload` consumes for
+      #    BLE DFU (west flash uses zephyr.signed.hex instead);
+      #    dfu_application.zip is the manifest-wrapped equivalent nRF
+      #    Connect Device Manager expects.
+      #    (This repo's sysbuild config does not produce an `app_update.bin`
+      #    — that filename is from NCS's older, non-sysbuild child-image
+      #    build flow and does not apply here; verified against a local
+      #    sysbuild build, UWB-267.)
       # -----------------------------------------------------------------------
       - name: Upload signed firmware images
         if: always()
@@ -120,7 +129,6 @@ jobs:
             build/mcuboot/zephyr/zephyr.hex
             build/uwb_tag_firmware/zephyr/zephyr.signed.hex
             build/uwb_tag_firmware/zephyr/zephyr.signed.bin
-            build/uwb_tag_firmware/zephyr/app_update.bin
             build/dfu_application.zip
           if-no-files-found: warn
 

@@ -6,6 +6,11 @@ Built on **nRF Connect SDK (NCS) v2.7.0** / Zephyr RTOS.
 See `docs/adr/0008-firmware-toolchain.md` in the `FUNDAMENTALS_SPORTS` repo for the
 toolchain decision rationale.
 
+For flashing a tag and updating it over BLE (initial SWD flash, the
+`mcumgr`/nRF Connect Device Manager DFU sequence, the on-hardware bring-up
+checklist, and the dev-key/non-production caveat), see
+**[`docs/ota.md`](docs/ota.md)**.
+
 ---
 
 ## Pinned NCS version
@@ -106,9 +111,8 @@ Key outputs:
 |------|------------|
 | `build/mcuboot/zephyr/zephyr.hex` | The bootloader image (flash once). |
 | `build/uwb_tag_firmware/zephyr/zephyr.signed.hex` | Signed app image for slot0 — combined with mcuboot, this is what `west flash` programs. |
-| `build/uwb_tag_firmware/zephyr/zephyr.signed.bin` | Same, raw binary. |
-| `build/uwb_tag_firmware/zephyr/app_update.bin` | Signed update artifact for slot1 — what the BLE/SMP DFU transport (UWB-265, see "MCUboot & OTA" below) pushes via `img_mgmt`'s `image upload`. |
-| `build/dfu_application.zip` | Multi-image DFU bundle (manifest + signed app image), produced automatically because MCUboot is enabled under sysbuild. |
+| `build/uwb_tag_firmware/zephyr/zephyr.signed.bin` | Same, raw binary — **also the file uploaded over the BLE/SMP DFU transport** (UWB-265, see "MCUboot & OTA" below) via `img_mgmt`'s `image upload`; MCUmgr computes chunk offsets itself, so no separate "update" binary is needed (verified against this repo's sysbuild output, UWB-267 — earlier drafts of this doc referenced a nonexistent `app_update.bin`; that filename comes from NCS's older, non-sysbuild child-image build flow and this repo's sysbuild config does not produce it). |
+| `build/dfu_application.zip` | Multi-image DFU bundle (manifest + signed app image, named `<image>.bin` inside — e.g. `uwb_tag_firmware.bin`), produced automatically because MCUboot is enabled under sysbuild. This is the file nRF Connect Device Manager expects for a manifest-driven upload; `mcumgr` CLI uploads the plain `zephyr.signed.bin` instead (see `docs/ota.md`). |
 
 The file `boards/nrf52dk_nrf52832.overlay` is picked up automatically and
 configures SPI1 with the DWM1001's DW1000 pin mapping.
@@ -186,8 +190,13 @@ comments). Summary:
   DFU transport" below.
 - **Image self-confirm, health gate & version reporting (UWB-266, done):**
   see "Image self-confirm, health gate & version reporting" below.
-- **Not yet in scope:** a CI-built signed update artifact and the full
-  laptop-side DFU procedure are documented in UWB-267.
+- **CI signed artifact + laptop DFU procedure (UWB-267, done):** CI already
+  builds via sysbuild and uploads `zephyr.signed.hex`/`.bin` and
+  `dfu_application.zip` as the `uwb-tag-firmware-signed` artifact on every
+  run (see `.github/workflows/build.yml`). The full flash + BLE-DFU
+  procedure (`mcumgr` CLI and nRF Connect Device Manager, plus the
+  consolidated on-hardware bring-up checklist and the dev-key caveat) is
+  **[`docs/ota.md`](docs/ota.md)**.
 
 ### BLE / SMP-MCUmgr DFU transport (UWB-265)
 
@@ -307,85 +316,14 @@ roll back to. What UWB-266 actually delivers is:
 ### Hardware bring-up checklist (DWM1001, on-device — not verified by CI)
 
 CI verifies the build produces the bootloader + a correctly signed app
-image (see `.github/workflows/build.yml`). The following is **hardware-only**
-and has **not** been exercised on a physical board as part of this change —
-verify on a DWM1001 (or nrf52dk_nrf52832 J-Link target) before relying on it:
-
-**MCUboot bring-up (UWB-264, carried forward):**
-
-1. `west build -b nrf52dk_nrf52832 . --sysbuild --pristine`
-2. `west flash` — programs both `mcuboot` and the signed app.
-3. Open RTT or UART (see "Viewing logs" above) *before* power-cycling/reset.
-4. Confirm the **MCUboot banner** appears first (e.g. `*** Booting MCUboot ***`
-   / `Starting bootloader` with the MCUboot build info), followed by the
-   application's own `UWB Tag Firmware starting — board: ...` boot banner
-   from `src/main.c` — i.e. the app is observed booting **through** MCUboot,
-   not flashed standalone at address 0.
-5. Confirm `west flash` did not report any partition-overflow / "image too
-   large for slot" error from imgtool during signing (would show up during
-   the `west build` step, not at flash time — flagging here as a first
-   sanity check while on the bench).
-
-**BLE/SMP bring-up (UWB-265, new):**
-
-6. After step 4's boot banner, confirm the log also shows `Bluetooth
-   initialised` and `BLE advertising started as "UWB-Tag"` (RTT/UART, see
-   "Viewing logs").
-7. Scan for BLE devices from a phone/laptop (e.g. nRF Connect for
-   Mobile/Desktop) and confirm **`UWB-Tag`** appears as a connectable
-   advertiser.
-8. Using the `mcumgr` CLI (`go install
-   github.com/apache/mynewt-mcumgr-cli/mcumgr@latest`) or **nRF Connect
-   Device Manager**, connect over BLE and run:
-   ```bash
-   mcumgr --conntype ble --connstring peer_name='UWB-Tag' os echo -l '{"echo":"hello"}'
-   mcumgr --conntype ble --connstring peer_name='UWB-Tag' image list
-   ```
-   Expect the echoed string back from `os echo`, and `image list` to show
-   `image=0 slot=0` as `active confirmed` with the version signed into
-   `zephyr.signed.bin` (slot1 will be empty until an image has been
-   uploaded).
-9. Confirm the log shows `BLE central connected` on connect and `BLE central
-   disconnected ... resuming advertising` after the client disconnects (i.e.
-   the tag re-advertises and is reachable for a subsequent DFU attempt
-   without a manual reset).
-10. Optionally (smoke-test the upload path, without yet confirming/booting
-    the new image — that full procedure is UWB-267): `mcumgr ... image
-    upload build/uwb_tag_firmware/zephyr/zephyr.signed.bin` and confirm
-    `image list` now shows the uploaded image in `image=0 slot=1`.
-
-**Self-confirm, health gate & version (UWB-266, new):**
-
-11. Confirm step 4's boot banner now also prints a `version:` field matching
-    the `VERSION` file (e.g. `version: 0.1.0`), and that `mcumgr image list`
-    (step 8) reports the same version string against `image=0 slot=0`.
-12. On the *first* boot after `west flash` (no upgrade has happened yet),
-    confirm the log does **not** print `Boot self-check FAILED` or `Boot
-    self-check passed` — only `Image already confirmed — skipping
-    self-check` at `DBG` level. This is expected: MCUboot treats a
-    never-swapped image as confirmed from the start (see "Image
-    self-confirm..." above), so the gate is a no-op here by design.
-13. **Exercise the gate on a real upgrade cycle** — build a second image with
-    a bumped `VERSION` (e.g. `VERSION_TWEAK`), `image upload` it (step 10),
-    then `mcumgr ... image test <hash>` (marks it pending, one-time boot) and
-    reset the device. Confirm the log now shows `Boot self-check passed —
-    image confirmed permanent`, and `mcumgr image list` reports the new
-    image as `active confirmed` (not just `active`).
-14. **Confirm persistence across a power cycle** (not just a soft reset): with
-    step 13's image now confirmed, fully power-cycle the board (not just
-    `reset`) and confirm it boots the same (new) image and `image list`
-    still reports it `confirmed`.
-15. **Deliberately-failing image, and the honest limitation:** temporarily
-    force `image_health_evaluate()` (`src/image_health.c`) to always return
-    `IMAGE_HEALTH_FAIL`, build, `image upload` + `image test` it, and reset.
-    Confirm the log shows `Boot self-check FAILED — image left unconfirmed`
-    and `mcumgr image list` reports it `active` but **not** `confirmed` —
-    indefinitely, across further resets. **Do not expect a revert to the
-    previous image** — per the "Honesty note" above, this repo's
-    overwrite-only MCUboot mode has no revert mechanism; the failing image
-    keeps booting (in a degraded, unconfirmed state) until a corrected image
-    is uploaded and confirmed via steps 10/13. Revert this temporary change
-    before merging/flashing a real image.
+image (see `.github/workflows/build.yml`). The full ordered checklist —
+covering MCUboot bring-up (UWB-264), BLE/SMP bring-up (UWB-265), and the
+self-confirm/health-gate/version behaviour (UWB-266) — is **hardware-only**
+and has **not** been exercised on a physical board as part of this repo's
+CI. It now lives in **[`docs/ota.md`](docs/ota.md) §3** (consolidated there
+alongside the flash and BLE-DFU procedure, UWB-267) rather than duplicated
+here — verify on a DWM1001 (or nrf52dk_nrf52832 J-Link target) before
+relying on any of it.
 
 ---
 
@@ -410,6 +348,8 @@ uwb_tag_firmware/
 │   └── image_health/           # ztest host suite for image_health_evaluate() (UWB-266)
 ├── boards/
 │   └── nrf52dk_nrf52832.overlay  # DWM1001 SPI1/GPIO pin mapping for DW1000
+├── docs/
+│   └── ota.md                   # flash + BLE-DFU procedure, bring-up checklist (UWB-267)
 └── README.md                   # this file
 ```
 
@@ -430,8 +370,9 @@ Upcoming additions (later subissues):
   see "BLE / SMP-MCUmgr DFU transport" above.
 - Image self-confirm, health gate & version reporting (ADR-0040, UWB-266) —
   **done**, see "Image self-confirm, health gate & version reporting" above.
-  Still to come: the CI signed artifact + full laptop DFU procedure docs
-  (UWB-267).
+- CI signed-update artifact + host DFU/bring-up procedure docs (ADR-0040,
+  UWB-267) — **done**, see "MCUboot & OTA" above and `docs/ota.md`. This
+  closes out the ADR-0040 OTA epic.
 - `.github/workflows/` — CI build + twister (UWB-91 or dedicated ticket)
 
 ---
