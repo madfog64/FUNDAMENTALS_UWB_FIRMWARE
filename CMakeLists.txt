@@ -3,6 +3,34 @@ cmake_minimum_required(VERSION 3.20.0)
 # Board overlay for DWM1001 pin assignments is at boards/nrf52dk_nrf52832.overlay.
 # Zephyr picks it up automatically when building with -b nrf52dk_nrf52832.
 
+# ---------------------------------------------------------------------------
+# Low-power tag profile (ADR-0046, UWB-314)
+#
+# `-DCONFIG_UWB_TAG_LOW_POWER=y` on the west build command line is a CLI
+# Kconfig override. Under this app's sysbuild flow (sysbuild.conf enables
+# MCUboot), sysbuild forwards a raw `-DCONFIG_<NAME>=<val>` CLI arg to this
+# child image's own cmake invocation as `-DCLI_CONFIG_<NAME>:INTERNAL=<val>`
+# (renamed to avoid colliding with Kconfig's own `CONFIG_<NAME>` cache
+# variable, which does not exist yet at this point) — verified empirically
+# against this repo's pinned NCS v2.7.0 tree (build_lowpower/UWB-314/
+# CMakeCache.txt) while implementing this ticket; a plain
+# `if(CONFIG_UWB_TAG_LOW_POWER)` check here silently sees nothing, even
+# though Kconfig itself (inside find_package(Zephyr) below) correctly
+# resolves the same CLI override on its own, independently of this check.
+#
+# So: check CLI_CONFIG_UWB_TAG_LOW_POWER here, *before* find_package(Zephyr)
+# runs Kconfig, to conditionally layer overlay-lowpower.conf on top of
+# prj.conf via EXTRA_CONF_FILE (which must be set before find_package(Zephyr)
+# — the documented Zephyr mechanism for CMake-time-conditional conf
+# fragments). See overlay-lowpower.conf's header comment for what it sets and
+# why a .conf fragment (rather than a Kconfig `default`) is required here.
+# Default (bench) builds do not pass the CLI override, so neither variable is
+# set and EXTRA_CONF_FILE is left untouched — behaviour is unchanged.
+# ---------------------------------------------------------------------------
+if(CLI_CONFIG_UWB_TAG_LOW_POWER)
+  list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_SOURCE_DIR}/overlay-lowpower.conf")
+endif()
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(uwb_tag_firmware VERSION 0.1.0)
 

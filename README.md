@@ -117,6 +117,17 @@ Key outputs:
 The file `boards/nrf52dk_nrf52832.overlay` is picked up automatically and
 configures SPI1 with the DWM1001's DW1000 pin mapping.
 
+### Low-power profile (ADR-0046, UWB-314)
+
+```bash
+west build -b nrf52dk_nrf52832 . --sysbuild -- -DCONFIG_UWB_TAG_LOW_POWER=y
+```
+
+Same sysbuild/MCUboot flow, with the field/low-power tag profile enabled.
+See "Power-management profile (ADR-0046)" below for what this changes and
+why; the plain `west build ... --sysbuild` command above (no `-D`) is the
+default **bench** build and is unaffected by this flag.
+
 ### native_sim (headless / CI, no hardware required)
 
 ```bash
@@ -165,6 +176,85 @@ screen /dev/ttyACM0 115200
 # or
 minicom -D /dev/ttyACM0 -b 115200
 ```
+
+---
+
+## Power-management profile (ADR-0046)
+
+Per **ADR-0046** (`docs/adr/0046-tag-power-management-profile.md` in the
+`FUNDAMENTALS_SPORTS` repo), **"LocationTag" is a low-power *profile* of this single tag
+application, not a forked app or board.** The aggressive field settings are
+gated behind one Kconfig symbol, `CONFIG_UWB_TAG_LOW_POWER` (default `n`),
+so a bench/debug build keeps RTT/UART logging and a field build is
+power-optimised — one codebase, two behaviours.
+
+### Three-state power model
+
+The tag has three power states (the seam every UWB-13 power subissue
+references — this ticket, UWB-314, delivers the build-profile switch + the
+PM baseline only; the other columns are separate, later subissues):
+
+| State | When | nRF52 | DW1000 | BLE |
+|---|---|---|---|---|
+| **ACTIVE** (tracking) | in an active session: listen SYNC + blink each superframe | tickless idle between radio events | stays in IDLE/RX — no per-cycle deep sleep (cadence too tight to re-acquire) | advertising suppressed during tracking (UWB-320) |
+| **STANDBY** (idle) | powered, no active session | tickless idle, long sleeps | DEEPSLEEP / low-power listening, periodic wake to sample for a live network (UWB-319) | advertising enabled — the OTA/maintenance window (ADR-0040) |
+| **OFF** (storage/ship) | storage, long idle | System-OFF (or CPU off + DW1000 deep sleep), wake on reset/button | deep sleep | off |
+
+See ADR-0046 for the full rationale, including why DW1000 deep-sleep is a
+STANDBY/OFF-only mechanism (the ADR-001 tracking rate, ~75 Hz, requires the
+radio listen-ready every ~13 ms — too tight to deep-sleep and re-acquire per
+cycle) and the two points still open pending product input (target battery
+life / blink down-rate policy, and the battery-reporting channel).
+
+### What `CONFIG_UWB_TAG_LOW_POWER` currently does (UWB-314 scope)
+
+Setting `-DCONFIG_UWB_TAG_LOW_POWER=y` layers **`overlay-lowpower.conf`** on
+top of `prj.conf` (wired in by `CMakeLists.txt` via `EXTRA_CONF_FILE` — see
+that file's header comment for why a `.conf` fragment is used instead of a
+Kconfig `default`/`select` block: several of the symbols involved are given
+real values by the board's own `nrf52dk_nrf52832_defconfig`, which outranks
+any conditional Kconfig default regardless of ordering):
+
+- **`CONFIG_PM_DEVICE=y`** — device-level power management hooks
+  (suspend/resume), the seam the DW1000 sleep/wake driver (UWB-316) hangs
+  off.
+- **RTT + UART log backends dropped** (`CONFIG_LOG_BACKEND_RTT=n`,
+  `CONFIG_USE_SEGGER_RTT=n`, `CONFIG_LOG_BACKEND_UART=n`) and
+  **`CONFIG_LOG_DEFAULT_LEVEL=1`** (errors only) — both backends hold
+  peripherals/the CPU awake; `CONFIG_LOG` itself stays on so log call sites
+  still compile (useful if a future battery-backed backend is added under
+  this profile).
+- **UART console disabled** (`CONFIG_SERIAL=n`, `CONFIG_UART_CONSOLE=n`) —
+  nothing in this profile's scope needs the UART peripheral (no shell
+  transport; BLE/SMP-over-BLE, UWB-265, does not use it).
+
+**Honesty note — `CONFIG_PM` (system-level power-state residency policy) is
+NOT enabled by this profile.** On the pinned NCS v2.7.0 / Zephyr 3.6.99 tree
+this repo builds against, no Nordic SoC (nRF52/53/91/54) `select`s
+`HAS_PM` — verified locally against the west workspace source
+(`soc/nordic/**/Kconfig*`) while implementing this ticket — so `CONFIG_PM`
+has no satisfiable path to `y` on `nrf52dk_nrf52832` in this SDK version;
+attempting `select PM` from this app's Kconfig fails Zephyr's Kconfig
+dependency check at configure time. This does not mean the tag never sleeps:
+Zephyr's tickless kernel (`CONFIG_TICKLESS_KERNEL`, on by default when
+`TICKLESS_CAPABLE`) plus the Cortex-M idle loop's WFE/WFI already give
+event-driven CPU idle between radio events without `CONFIG_PM` — what
+`CONFIG_PM` would add on top is SoC-level residency-*state selection*
+policy (choosing among multiple advertised low-power modes), which this
+Zephyr version's nRF52 SoC port does not implement. Revisit if a later NCS
+version adds Nordic `HAS_PM` support, or drop the ADR-0046 wording if the
+tickless-kernel baseline is judged sufficient.
+
+Out of scope here (later UWB-13 subissues, see ADR-0046 "New work
+created"): DW1000 sleep/wake (UWB-316), the STANDBY power-state machine
+(UWB-319), BLE-advertising duty-cycle policy (UWB-320), battery voltage
+monitoring (UWB-322). None of the ACTIVE/STANDBY/OFF behaviour above is
+wired into a running mode yet — `src/main.c` is still BLE/SMP + idle (see
+"MCUboot & OTA" below); this ticket only lands the profile switch and PM
+baseline those subissues build on.
+
+CI builds both profiles on every push/PR (`.github/workflows/build.yml`,
+jobs `west-build` and `west-build-low-power`).
 
 ---
 
@@ -332,8 +422,10 @@ relying on any of it.
 ```
 uwb_tag_firmware/
 ├── west.yml                    # west manifest — pins NCS v2.7.0
-├── CMakeLists.txt              # Zephyr application cmake
-├── prj.conf                    # Kconfig fragment (logging, UART, RTT, BLE + MCUmgr/SMP)
+├── CMakeLists.txt              # Zephyr application cmake (incl. the low-power EXTRA_CONF_FILE hook, ADR-0046)
+├── Kconfig                     # app-level Kconfig root — CONFIG_UWB_TAG_LOW_POWER (ADR-0046)
+├── prj.conf                    # Kconfig fragment (logging, UART, RTT, BLE + MCUmgr/SMP) — bench-build defaults
+├── overlay-lowpower.conf       # low-power profile overrides, layered on prj.conf (ADR-0046, UWB-314)
 ├── sysbuild.conf                # sysbuild config — enables MCUboot + swap mode + signing key
 ├── pm_static.yml                 # static flash partition layout (mcuboot/slot0/slot1/settings)
 ├── VERSION                      # single source of the app image version (UWB-266)
@@ -370,6 +462,11 @@ Upcoming additions (later subissues):
   see "BLE / SMP-MCUmgr DFU transport" above.
 - Image self-confirm, health gate & version reporting (ADR-0040, UWB-266) —
   **done**, see "Image self-confirm, health gate & version reporting" above.
+- Low-power tag build profile + Zephyr PM baseline (ADR-0046, UWB-314) —
+  **done**, see "Power-management profile (ADR-0046)" above. DW1000
+  sleep/wake (UWB-316), the STANDBY state machine (UWB-319), BLE-advertising
+  duty-cycle policy (UWB-320), and battery monitoring (UWB-322) are separate,
+  not-yet-implemented follow-ons.
 - CI signed-update artifact + host DFU/bring-up procedure docs (ADR-0040,
   UWB-267) — **done**, see "MCUboot & OTA" above and `docs/ota.md`. This
   closes out the ADR-0040 OTA epic.

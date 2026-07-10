@@ -12,3 +12,54 @@ source "$(ZEPHYR_BASE)/Kconfig"
 
 # DW1000 UWB transceiver driver (vendored Decawave API)
 source "$(APPLICATION_SOURCE_DIR)/drivers/dw1000/Kconfig"
+
+# ---------------------------------------------------------------------------
+# Tag power-management profile (ADR-0046, UWB-314)
+#
+# "LocationTag" is a low-power *profile* of the single tag app, not a forked
+# app/board (ADR-0046 "Decision"). This symbol is the switch; what it
+# actually changes lives in overlay-lowpower.conf, layered on top of
+# prj.conf by CMakeLists.txt (EXTRA_CONF_FILE) whenever this is set — see
+# that file's header comment for the settings themselves and why they live
+# in a .conf fragment rather than Kconfig `default`/`select` overrides here
+# (the board's own nrf52dk_nrf52832_defconfig assigns real values to several
+# of the symbols involved, which outranks any conditional Kconfig default).
+#
+# Bench/debug builds (this symbol left at its default, n) are unaffected:
+# RTT + UART logging and always-on BLE advertising are unchanged.
+#
+# Out of scope here (later UWB-13 subissues, ADR-0046 "New work created"):
+# DW1000 sleep/wake (UWB-316), the STANDBY state machine (UWB-319),
+# BLE-advertising duty-cycle policy (UWB-320), battery monitoring (UWB-322).
+# ---------------------------------------------------------------------------
+
+config UWB_TAG_LOW_POWER
+	bool "Low-power tag profile (ADR-0046 'LocationTag')"
+	default n
+	help
+	  Enables the field/low-power operating profile described in ADR-0046
+	  (docs/adr/0046-tag-power-management-profile.md, FUNDAMENTALS_SPORTS
+	  repo): CONFIG_PM_DEVICE plus dropping the RTT/UART log backends (and
+	  the UART console) that would otherwise hold the CPU and peripherals
+	  awake, and a lower default log level. See overlay-lowpower.conf for
+	  the exact settings.
+
+	  NOTE — CONFIG_PM (system-level power-state residency policy) is NOT
+	  enabled by this symbol: on the pinned NCS v2.7.0 / Zephyr 3.6.99 tree
+	  this repo builds against, no Nordic SoC (nRF52/53/91/54) `select`s
+	  HAS_PM, so CONFIG_PM has no satisfiable path to y on nrf52dk_nrf52832
+	  (verified locally — `select PM` here fails Kconfig's dependency
+	  check). Zephyr's tickless kernel (CONFIG_TICKLESS_KERNEL, default y
+	  when TICKLESS_CAPABLE) and the Cortex-M idle loop's WFE/WFI already
+	  give event-driven CPU idle between radio events without CONFIG_PM;
+	  CONFIG_PM would only add SoC-level residency-state *policy* on top,
+	  which this SoC port does not implement in this Zephyr version.
+	  CONFIG_PM_DEVICE (device suspend/resume hooks, used by the DW1000
+	  sleep seam, UWB-316) has no such dependency and is enabled normally.
+
+	  Leave at the default (n) for bench/debug builds.
+
+	  This is the build-profile + PM-baseline mechanism only (UWB-314). It
+	  does not implement the STANDBY state machine, DW1000 sleep/wake, BLE
+	  advertising duty-cycling, or battery monitoring — those are separate
+	  UWB-13 subissues (UWB-316/319/320/322) that build on this seam.
