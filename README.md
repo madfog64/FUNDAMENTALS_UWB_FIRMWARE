@@ -247,11 +247,13 @@ tickless-kernel baseline is judged sufficient.
 
 Out of scope here (later UWB-13 subissues, see ADR-0046 "New work
 created"): DW1000 sleep/wake (UWB-316), the STANDBY power-state machine
-(UWB-319), BLE-advertising duty-cycle policy (UWB-320), battery voltage
-monitoring (UWB-322). None of the ACTIVE/STANDBY/OFF behaviour above is
-wired into a running mode yet — `src/main.c` is still BLE/SMP + idle (see
-"MCUboot & OTA" below); this ticket only lands the profile switch and PM
-baseline those subissues build on.
+(UWB-319), battery voltage monitoring (UWB-322). BLE-advertising
+duty-cycle policy (UWB-320) is **done** — see "BLE advertising duty-cycle
+policy (UWB-320)" under "MCUboot & OTA" below. None of the other
+ACTIVE/STANDBY/OFF behaviour above is wired into a running mode yet —
+`src/main.c` is still BLE/SMP + idle plus a fixed boot-time power state
+(see "MCUboot & OTA" below); UWB-314 (this section) only lands the profile
+switch and PM baseline those subissues build on.
 
 CI builds both profiles on every push/PR (`.github/workflows/build.yml`,
 jobs `west-build` and `west-build-low-power`).
@@ -304,8 +306,10 @@ on desktop/mobile) can drive:
   is read from the MCUboot image header via `image list`, not a separate
   `os_mgmt` field.
 
-`src/main.c` brings up the BLE stack and starts/re-arms advertising on
-connect/disconnect, and runs the UWB-266 self-check/confirm gate — the
+`src/main.c` brings up the BLE stack and hands off to the BLE
+advertising duty-cycle policy (`src/ble_adv_policy.{h,c}` /
+`ble_adv_policy_zephyr.c`, UWB-320 — see below) to start/re-arm
+advertising, and runs the UWB-266 self-check/confirm gate — the
 `img_mgmt`/`os_mgmt` command handlers themselves are registered
 automatically by `CONFIG_MCUMGR_GRP_IMG` / `CONFIG_MCUMGR_GRP_OS` (no
 application code calls them).
@@ -327,6 +331,78 @@ enforced in code; there is no mutual-exclusion mechanism between "tag is
 blinking in its TDMA slot" and "tag is accepting a BLE image upload" as of
 this subissue. Solving that (e.g. refusing/pausing uploads while joined to a
 tracking cycle) is a follow-on concern, not a UWB-265 requirement.
+
+### BLE advertising duty-cycle policy (UWB-320, ADR-0046 point 4)
+
+UWB-265 above made the tag advertise **unconditionally**, forever. ADR-0046
+point 4 turns that into a policy driven by the tag's power state:
+
+| Profile | State | Advertising |
+|---|---|---|
+| Bench (`!CONFIG_UWB_TAG_LOW_POWER`, default) | any | **always on** — unchanged from UWB-265 |
+| Low-power (`CONFIG_UWB_TAG_LOW_POWER=y`) | `BLE_ADV_POLICY_STATE_ACTIVE` (tracking a session) | **suppressed** |
+| Low-power (`CONFIG_UWB_TAG_LOW_POWER=y`) | `BLE_ADV_POLICY_STATE_STANDBY` (no active session / maintenance window) | **enabled** |
+
+This is exactly the "advertising suppressed during tracking" / "advertising
+enabled — the OTA/maintenance window" row of the three-state table under
+"Power-management profile (ADR-0046)" above, and it directly implements the
+**ADR-0040 maintenance-window assumption**: OTA (BLE/SMP DFU, UWB-265/266)
+is only ever attempted while the tag is in that window (not mid-session),
+and this ticket is what actually makes the radio unreachable outside of it
+in the low-power profile — previously that was documentation only ("this is
+documented, not enforced in code", see the coexistence note above). The
+bench profile keeps the pre-UWB-320, always-reachable behaviour so OTA stays
+trivially reachable on the bench regardless of any power-state logic.
+
+**Design (`src/ble_adv_policy.h`, `.c`, `_zephyr.c`):**
+
+- `ble_adv_policy_should_advertise(low_power_profile, state)`
+  (`ble_adv_policy.c`) is the **pure decision**: no Zephyr includes, no BLE
+  stack — host-testable (`tests/ble_adv_policy`, mirrors `image_health`'s
+  pure/Zephyr split, UWB-266). Bench profile always returns `true`
+  regardless of `state`; low-power profile returns `false` only for
+  `BLE_ADV_POLICY_STATE_ACTIVE`.
+- `ble_adv_policy_zephyr.c` wraps the actual `bt_le_adv_start()`/
+  `bt_le_adv_stop()` calls (moved here verbatim from UWB-265's `main.c`,
+  including the connect/disconnect `k_work`-based re-arm), and adds
+  `ble_adv_policy_set_state()` — the **caller-supplied signal seam** this
+  ticket wires against. It applies the pure decision and calls
+  `ble_adv_enable()`/`ble_adv_disable()` accordingly.
+- **Connect/disconnect re-arm is preserved, and made policy-aware:** a
+  disconnect only re-arms advertising (`k_work_submit`) if the policy still
+  currently allows it (an internal `adv_allowed` flag, set by
+  `ble_adv_enable()`/`ble_adv_disable()`). This guards the edge case of a
+  BLE central disconnecting after the tag has since transitioned to ACTIVE
+  — it will not silently start advertising again mid-session. Concurrent
+  OTA-during-tracking (i.e. entering ACTIVE while still connected) is out of
+  scope, per ADR-0040's deferral — this only prevents the *disconnect* path
+  from undoing suppression, it does not forcibly drop an existing
+  connection.
+- **No live state machine yet:** the STANDBY power-state machine that would
+  drive `ble_adv_policy_set_state()` from real session/SYNC-loss state is a
+  sibling ticket (UWB-319, not yet implemented). Until then, `main.c`'s
+  `bt_ready()` calls `ble_adv_policy_init()` once and then
+  `ble_adv_policy_set_state(BLE_ADV_POLICY_STATE_STANDBY)` — a fixed boot-time
+  default, not a live tracker. This is intentional: this ticket delivers the
+  *mechanism* (the policy + the seam), not the orchestration; wiring it to a
+  running ACTIVE/STANDBY tracker waits on UWB-319 and the tracking-app
+  orchestration epic (see ADR-0046 "Harder / new work").
+- **SMP/MCUmgr registration is unaffected:** `CONFIG_MCUMGR_GRP_IMG` /
+  `CONFIG_MCUMGR_GRP_OS` register their handlers independently of
+  advertising state — suppressing advertising only makes the tag harder to
+  *discover/connect to*, it does not change what an already-connected SMP
+  client can do. OTA stays reachable in the STANDBY window exactly as
+  before UWB-320.
+
+**Host-tested:** `tests/ble_adv_policy` (ztest/`unit_testing`) exercises
+`ble_adv_policy_should_advertise()`'s four (profile, state) combinations.
+`ble_adv_policy_zephyr.c`'s actual advertise/stop wiring is Zephyr-BT-stack
+only and is **not** unit tested — exercised by the real board build and,
+like the rest of the BLE bring-up, needs on-device verification (there is no
+STANDBY state machine yet to trigger a real ACTIVE→STANDBY transition on
+hardware; verifying the low-power-profile suppression end-to-end currently
+means manually driving `ble_adv_policy_set_state()`, e.g. from a debug
+build, until UWB-319 lands).
 
 ### Image self-confirm, health gate & version reporting (UWB-266)
 
@@ -435,9 +511,13 @@ uwb_tag_firmware/
 │   ├── main.c                  # boot banner + self-check/confirm gate + BLE/SMP-MCUmgr bring-up
 │   ├── image_health.h          # health-gate types + evaluate()/run_checks() API (UWB-266)
 │   ├── image_health.c          # pure gate decision logic (host-testable, UWB-266)
-│   └── image_health_zephyr.c   # Zephyr-side check gathering (UWB-266)
+│   ├── image_health_zephyr.c   # Zephyr-side check gathering (UWB-266)
+│   ├── ble_adv_policy.h        # BLE adv duty-cycle policy types + API (UWB-320)
+│   ├── ble_adv_policy.c        # pure should-advertise() decision (host-testable, UWB-320)
+│   └── ble_adv_policy_zephyr.c # Zephyr-side adv start/stop + connect/disconnect wiring (UWB-320)
 ├── tests/
-│   └── image_health/           # ztest host suite for image_health_evaluate() (UWB-266)
+│   ├── image_health/           # ztest host suite for image_health_evaluate() (UWB-266)
+│   └── ble_adv_policy/         # ztest host suite for ble_adv_policy_should_advertise() (UWB-320)
 ├── boards/
 │   └── nrf52dk_nrf52832.overlay  # DWM1001 SPI1/GPIO pin mapping for DW1000
 ├── docs/
@@ -464,9 +544,12 @@ Upcoming additions (later subissues):
   **done**, see "Image self-confirm, health gate & version reporting" above.
 - Low-power tag build profile + Zephyr PM baseline (ADR-0046, UWB-314) —
   **done**, see "Power-management profile (ADR-0046)" above. DW1000
-  sleep/wake (UWB-316), the STANDBY state machine (UWB-319), BLE-advertising
-  duty-cycle policy (UWB-320), and battery monitoring (UWB-322) are separate,
-  not-yet-implemented follow-ons.
+  sleep/wake (UWB-316) and the STANDBY state machine (UWB-319) are separate,
+  not-yet-implemented follow-ons; battery monitoring (UWB-322) likewise.
+- BLE advertising duty-cycle policy (ADR-0046 point 4, UWB-320) — **done**,
+  see "BLE advertising duty-cycle policy (UWB-320, ADR-0046 point 4)" above.
+  Wires against a caller-supplied power-state signal (boot-time default
+  today); the STANDBY state machine that would drive it live is UWB-319.
 - CI signed-update artifact + host DFU/bring-up procedure docs (ADR-0040,
   UWB-267) — **done**, see "MCUboot & OTA" above and `docs/ota.md`. This
   closes out the ADR-0040 OTA epic.

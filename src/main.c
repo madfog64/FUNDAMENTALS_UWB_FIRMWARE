@@ -15,6 +15,14 @@
  * automatically by CONFIG_MCUMGR_GRP_IMG / CONFIG_MCUMGR_GRP_OS, no
  * application code needed).
  *
+ * BLE advertising duty-cycle policy (UWB-320, ADR-0046 point 4): the actual
+ * advertise/stop wiring now lives in ble_adv_policy.{h,c}/
+ * ble_adv_policy_zephyr.c. main.c only initialises the policy and drives it
+ * with an initial power state -- see bt_ready() below for what state and
+ * why. The bench profile (!CONFIG_UWB_TAG_LOW_POWER) always advertises
+ * regardless of the requested state, so this is a no-op behaviour change
+ * for that profile.
+ *
  * Image self-confirm / test-and-rollback / version-set (UWB-266):
  *   See image_health.h for the gate itself and the honest writeup of what
  *   "test-and-rollback" actually means under this repo's MCUboot
@@ -31,11 +39,11 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/conn.h>
 #include <zephyr/dfu/mcuboot.h>
 
 #include <app_version.h>
 
+#include "ble_adv_policy.h"
 #include "image_health.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
@@ -74,64 +82,6 @@ static void confirm_image_if_healthy(void)
 	LOG_INF("Boot self-check passed — image confirmed permanent");
 }
 
-/* Advertising is (re)started from a work item so it can be re-armed from the
- * disconnect callback (which runs in the BT RX thread, not a context that
- * should block starting a new advertising set directly).
- */
-static struct k_work advertise_work;
-
-/* Minimal advertising data: flags + the device name (CONFIG_BT_DEVICE_NAME,
- * "UWB-Tag"). The SMP GATT service itself (advertised implicitly by being
- * connectable + discoverable via GATT service discovery) is registered by
- * CONFIG_MCUMGR_TRANSPORT_BT; it does not need to be listed in the
- * advertising payload for a client to find it after connecting.
- */
-static const struct bt_data ad[] = {
-	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
-};
-
-static void advertise(struct k_work *work)
-{
-	ARG_UNUSED(work);
-	int err;
-
-	bt_le_adv_stop();
-
-	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), NULL, 0);
-	if (err) {
-		LOG_ERR("BLE advertising failed to start (err %d)", err);
-		return;
-	}
-
-	LOG_INF("BLE advertising started as \"%s\"", CONFIG_BT_DEVICE_NAME);
-}
-
-static void connected(struct bt_conn *conn, uint8_t err)
-{
-	ARG_UNUSED(conn);
-
-	if (err) {
-		LOG_ERR("BLE connection failed (err 0x%02x)", err);
-		return;
-	}
-
-	LOG_INF("BLE central connected — SMP/MCUmgr service available");
-}
-
-static void disconnected(struct bt_conn *conn, uint8_t reason)
-{
-	ARG_UNUSED(conn);
-
-	LOG_INF("BLE central disconnected (reason 0x%02x) — resuming advertising", reason);
-	k_work_submit(&advertise_work);
-}
-
-BT_CONN_CB_DEFINE(conn_callbacks) = {
-	.connected = connected,
-	.disconnected = disconnected,
-};
-
 static void bt_ready(int err)
 {
 	if (err) {
@@ -140,7 +90,24 @@ static void bt_ready(int err)
 	}
 
 	LOG_INF("Bluetooth initialised");
-	k_work_submit(&advertise_work);
+
+	ble_adv_policy_init();
+
+	/*
+	 * Initial power state (UWB-320, ADR-0046 point 4): the STANDBY
+	 * power-state machine that would drive ble_adv_policy_set_state()
+	 * from real session/SYNC-loss state is a sibling ticket (UWB-319,
+	 * not yet implemented) -- see ble_adv_policy.h's "Scope note". Until
+	 * then, default to STANDBY at boot: the tag has no active session
+	 * yet (join/track orchestration is itself deferred, see the file
+	 * header above), so STANDBY -- "advertise, this is the maintenance
+	 * window" (ADR-0040) -- is the correct state to boot into.
+	 *
+	 * Bench profile (!CONFIG_UWB_TAG_LOW_POWER): this call always
+	 * enables advertising regardless of the state passed in, so boot
+	 * behaviour there is unchanged from before UWB-320.
+	 */
+	ble_adv_policy_set_state(BLE_ADV_POLICY_STATE_STANDBY);
 }
 
 int main(void)
@@ -156,8 +123,6 @@ int main(void)
 	 * soon as possible after boot (UWB-266).
 	 */
 	confirm_image_if_healthy();
-
-	k_work_init(&advertise_work, advertise);
 
 	err = bt_enable(bt_ready);
 	if (err) {

@@ -1,0 +1,10 @@
+tests:
+  # Twister test ID: ble.adv_policy
+  # type: unit  => runs on the 'unit_testing' platform (native-hosted, no kernel).
+  # extra_args: M64_MODE=1 => compile as 64-bit (Zephyr's unittest.cmake defaults
+  #   to -m32, which requires gcc-multilib; M64_MODE=1 switches to -m64).
+  # CI invocation: west twister -p unit_testing -T tests/ble_adv_policy -v
+  ble.adv_policy:
+    type: unit
+    extra_args: M64_MODE=1
+    tags: ble power uwb-320

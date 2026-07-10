@@ -46,6 +46,8 @@ target_sources(app PRIVATE
   src/main.c
   src/image_health.c          # pure gate decision logic (UWB-266, host-testable)
   src/image_health_zephyr.c   # Zephyr-side check gathering (UWB-266)
+  src/ble_adv_policy.c         # pure BLE adv-policy decision (UWB-320, host-testable)
+  src/ble_adv_policy_zephyr.c  # Zephyr-side BLE adv start/stop wiring (UWB-320)
 )
 
 # Vendored Decawave DW1000 driver (enabled via CONFIG_DW1000 in prj.conf).
