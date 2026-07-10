@@ -12,6 +12,8 @@
  * Copyright (c) 2024 Fundamentals UWB project contributors.
  */
 
+#include <stddef.h> /* NULL */
+
 #include "image_health.h"
 
 enum image_health_result image_health_evaluate(const struct image_health_checks *checks)
