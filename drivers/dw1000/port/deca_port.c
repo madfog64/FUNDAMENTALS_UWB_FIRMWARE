@@ -116,6 +116,27 @@ static const struct gpio_dt_spec dw1000_reset =
     GPIO_DT_SPEC_GET(DW1000_NODE, reset_gpios);
 
 /* ---------------------------------------------------------------------------
+ * WAKEUP GPIO (UWB-316) — optional.
+ *
+ * The upstream "decawave,dw1000" devicetree binding
+ * (zephyr/dts/bindings/ieee802154/decawave,dw1000.yaml) does not define a
+ * wakeup-gpios property, and this is a vendored/upstream binding this repo
+ * does not own — so the WAKEUP pin is wired as a `wakeup-gpios` property on
+ * the special `/{ zephyr,user { ... }; };` node instead (Zephyr's generic,
+ * schema-free mechanism for ad hoc board GPIO wiring; see
+ * boards/nrf52dk_nrf52832.overlay). This keeps every board overlay that has
+ * not opted in building unaffected — no radio-behaviour change to the
+ * default build.
+ * --------------------------------------------------------------------------- */
+#define DW1000_WAKEUP_NODE DT_PATH(zephyr_user)
+
+#if DT_NODE_HAS_PROP(DW1000_WAKEUP_NODE, wakeup_gpios)
+#define DW1000_HAS_WAKEUP_GPIO 1
+static const struct gpio_dt_spec dw1000_wakeup =
+    GPIO_DT_SPEC_GET(DW1000_WAKEUP_NODE, wakeup_gpios);
+#endif
+
+/* ---------------------------------------------------------------------------
  * IRQ work item (deferred ISR execution)
  * --------------------------------------------------------------------------- */
 static struct k_work dw1000_irq_work;
@@ -194,6 +215,23 @@ int dw1000_port_init(void)
         return ret;
     }
 
+#if DW1000_HAS_WAKEUP_GPIO
+    /* Configure WAKEUP GPIO: output, initially inactive (UWB-316). */
+    if (!gpio_is_ready_dt(&dw1000_wakeup)) {
+        LOG_ERR("DW1000 WAKEUP GPIO device not ready");
+        return -ENODEV;
+    }
+    ret = gpio_pin_configure_dt(&dw1000_wakeup, GPIO_OUTPUT_INACTIVE);
+    if (ret < 0) {
+        LOG_ERR("Failed to configure DW1000 WAKEUP GPIO: %d", ret);
+        return ret;
+    }
+#else
+    LOG_DBG("DW1000 WAKEUP GPIO not wired (no wakeup-gpios on /zephyr,user) — "
+            "port_wakeup_dw1000() will be a no-op; DWT_WAKE_CS still wakes "
+            "the DW1000 on the next SPI transaction");
+#endif
+
     /* Initialise the work item used to defer dwt_isr() out of ISR context. */
     k_work_init(&dw1000_irq_work, dw1000_irq_work_handler);
 
@@ -261,6 +299,32 @@ void reset_DW1000(void)
     k_msleep(5);
 
     LOG_DBG("DW1000 hardware reset done");
+}
+
+/* ---------------------------------------------------------------------------
+ * WAKEUP pin (UWB-316)
+ *
+ * See the timing rationale in deca_port.h. Safe to call multiple times; a
+ * no-op (logged once at DBG level per call) when the board has no
+ * wakeup-gpios wired.
+ * --------------------------------------------------------------------------- */
+void port_wakeup_dw1000(void)
+{
+#if DW1000_HAS_WAKEUP_GPIO
+    /* Assert: hold WAKEUP high for >= 500 us (margin to 600 us). */
+    gpio_pin_set_dt(&dw1000_wakeup, 1);
+    k_busy_wait(600);
+
+    /* Deassert, then wait for the crystal oscillator to start and
+     * stabilise before any SPI transaction is attempted (5 ms — matches
+     * the vendored driver's dwt_spicswakeup() timing, deca_device.c). */
+    gpio_pin_set_dt(&dw1000_wakeup, 0);
+    k_msleep(5);
+
+    LOG_DBG("DW1000 WAKEUP pin pulsed");
+#else
+    LOG_DBG("port_wakeup_dw1000(): no WAKEUP GPIO wired — no-op");
+#endif
 }
 
 /* ---------------------------------------------------------------------------

@@ -11,8 +11,16 @@
  *   SPI1 MOSI  P0.20
  *   SPI1 MISO  P0.18
  *   SPI1 CS    P0.17  (software-managed CS via cs-gpios, active-low)
- *   DW1000 IRQ P0.19  (active-high: DW1000 asserts high on event)
- *   DW1000 RST P0.24  (active-low open-drain: drive low to reset, then release)
+ *   DW1000 IRQ    P0.19  (active-high: DW1000 asserts high on event)
+ *   DW1000 RST    P0.24  (active-low open-drain: drive low to reset, then release)
+ *   DW1000 WAKEUP P0.23  (active-high: drive high >= 500 us to wake from
+ *                         DEEPSLEEP, UWB-316 — see drivers/dw1000/dw1000_sleep.h)
+ *
+ * WAKEUP pin note: this is a placeholder pin assignment for the
+ * nrf52dk_nrf52832 stand-in target used throughout this repo (no real DWM1001
+ * board file exists yet) — it is NOT verified against a DWM1001 carrier board
+ * schematic. Confirm the real WAKEUP trace before relying on this on
+ * hardware; see the bring-up checklist in drivers/dw1000/dw1000_sleep.h.
  *
  * SPI driver choice: "nordic,nrf-spi" (non-DMA, interrupt-driven), NOT
  * "nordic,nrf-spim".  The nRF52832 SPIM peripheral has Product Anomaly 58
@@ -73,5 +81,23 @@
 		spi-max-frequency = <8000000>;    /* 8 MHz fast rate */
 		int-gpios   = <&gpio0 19 GPIO_ACTIVE_HIGH>;
 		reset-gpios = <&gpio0 24 GPIO_ACTIVE_LOW>;
+	};
+};
+
+/*
+ * DW1000 WAKEUP GPIO (UWB-316).
+ *
+ * The upstream "decawave,dw1000" binding does not define a wakeup-gpios
+ * property (this repo does not own/vendor that binding, so it is not
+ * extended directly) — wired instead on the generic, schema-free
+ * `/{ zephyr,user { ... }; };` node, Zephyr's standard mechanism for ad hoc
+ * board GPIO wiring outside a device's own binding. See
+ * drivers/dw1000/port/deca_port.c (port_wakeup_dw1000(), guarded on
+ * DT_NODE_HAS_PROP so boards without this property build unaffected) and
+ * drivers/dw1000/dw1000_sleep.c (dw1000_wake()).
+ */
+/ {
+	zephyr,user {
+		wakeup-gpios = <&gpio0 23 GPIO_ACTIVE_HIGH>;
 	};
 };
