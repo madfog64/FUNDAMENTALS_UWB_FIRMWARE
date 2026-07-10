@@ -93,6 +93,29 @@ void port_enable_dw1000_irq(void);
 void port_disable_dw1000_irq(void);
 
 /* ---------------------------------------------------------------------------
+ * WAKEUP pin (UWB-316)
+ *
+ * Pulses the DW1000 WAKEUP GPIO to bring it out of DEEPSLEEP, per the wake
+ * sequence configured by dw1000_sleep() (dw1000_sleep.c, DWT_WAKE_WK).
+ *
+ * Timing (mirrors the vendored driver's dwt_spicswakeup(), deca_device.c,
+ * which uses the same 5 ms figure for its own SPI-CS wake path):
+ *   - Hold WAKEUP high for >= 500 us (DW1000 User Manual: minimum pulse
+ *     width to register as a wake trigger on either WAKEUP or chip-select).
+ *   - Wait 5 ms after releasing WAKEUP for the crystal oscillator to start
+ *     and stabilise before any SPI transaction is attempted.
+ *
+ * Only compiled to a real GPIO pulse when the board overlay wires
+ * `wakeup-gpios` under `/{ zephyr,user { ... }; };` (see
+ * boards/nrf52dk_nrf52832.overlay) — this keeps every existing board/overlay
+ * that has not been updated building unaffected (no radio-behaviour change
+ * to the default build). When absent, this is a logged no-op; DWT_WAKE_CS
+ * (programmed by dw1000_sleep()) means the DW1000 will still wake on the
+ * next SPI transaction dw1000_configure() issues.
+ * --------------------------------------------------------------------------- */
+void port_wakeup_dw1000(void);
+
+/* ---------------------------------------------------------------------------
  * Delay and tick helpers
  * --------------------------------------------------------------------------- */
 

@@ -1,0 +1,10 @@
+tests:
+  # Twister test ID: dw1000.sleep
+  # type: unit  => runs on the 'unit_testing' platform (native-hosted, no kernel).
+  # extra_args: M64_MODE=1 => compile as 64-bit (Zephyr's unittest.cmake defaults
+  #   to -m32, which requires gcc-multilib; M64_MODE=1 switches to -m64).
+  # CI invocation: west twister -p unit_testing -T tests/dw1000_sleep -v
+  dw1000.sleep:
+    type: unit
+    extra_args: M64_MODE=1
+    tags: dw1000 sleep power uwb-316
