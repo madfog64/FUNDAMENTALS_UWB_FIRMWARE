@@ -50,6 +50,13 @@ target_sources(app PRIVATE
   src/ble_adv_policy_zephyr.c  # Zephyr-side BLE adv start/stop wiring (UWB-320)
 )
 
+if(CONFIG_UWB_BATTERY_MONITOR)
+  target_sources(app PRIVATE
+    src/battery.c          # pure raw-counts -> mV/percent conversion (UWB-322, host-testable)
+    src/battery_zephyr.c   # Zephyr-side SAADC read + timer + os_mgmt/log wiring (UWB-322)
+  )
+endif()
+
 # Vendored Decawave DW1000 driver (enabled via CONFIG_DW1000 in prj.conf).
 # The subdirectory CMakeLists.txt gates itself on CONFIG_DW1000.
 add_subdirectory(drivers/dw1000)

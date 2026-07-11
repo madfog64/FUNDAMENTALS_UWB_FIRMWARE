@@ -46,6 +46,10 @@
 #include "ble_adv_policy.h"
 #include "image_health.h"
 
+#if defined(CONFIG_UWB_BATTERY_MONITOR)
+#include "battery.h"
+#endif
+
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 /*
@@ -123,6 +127,26 @@ int main(void)
 	 * soon as possible after boot (UWB-266).
 	 */
 	confirm_image_if_healthy();
+
+#if defined(CONFIG_UWB_BATTERY_MONITOR)
+	/*
+	 * Battery voltage monitor (UWB-322, ADR-0046 point 5): starts the
+	 * low-rate SAADC VDD sample loop (CONFIG_UWB_BATTERY_SAMPLE_INTERVAL_S)
+	 * and, when CONFIG_MCUMGR_GRP_OS_INFO_CUSTOM_HOOKS is enabled,
+	 * registers the os_mgmt "info" custom hook that surfaces the latest
+	 * reading (see battery_zephyr.c). Started before BLE/SMP bring-up so
+	 * an os_mgmt query shortly after boot is at least attempting a
+	 * reading (the very first sample may still be pending, in which case
+	 * battery_monitor_get_latest() reports "no reading yet" -- see
+	 * battery.h).
+	 */
+	int battery_err = battery_monitor_init();
+
+	if (battery_err != 0) {
+		LOG_ERR("Battery monitor init failed (err %d) -- continuing without it",
+			battery_err);
+	}
+#endif
 
 	err = bt_enable(bt_ready);
 	if (err) {

@@ -39,6 +39,7 @@
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/adc/nrf-adc.h>
 
 &pinctrl {
 	spi1_default: spi1_default {
@@ -99,5 +100,44 @@
 / {
 	zephyr,user {
 		wakeup-gpios = <&gpio0 23 GPIO_ACTIVE_HIGH>;
+
+		/*
+		 * Battery voltage monitor ADC channel (UWB-322, ADR-0046
+		 * point 5). Index 0 into this node's io-channels list is
+		 * what src/battery_zephyr.c's ADC_DT_SPEC_GET(DT_PATH(zephyr_user))
+		 * resolves to (idx defaults to 0) -- see &adc's channel@0
+		 * below for the actual gain/reference/resolution config,
+		 * which src/battery.h's conversion constants must match.
+		 */
+		io-channels = <&adc 0>;
+	};
+};
+
+/*
+ * SAADC channel reading NRF_SAADC_VDD (UWB-322, ADR-0046 point 5).
+ *
+ * Gain 1/6 + internal 0.6 V reference gives a 3.6 V full-scale range
+ * (0.6 V / (1/6) = 3.6 V), comfortably spanning the tag's expected
+ * single-cell Li-based VDD range (~1.8-3.6 V) without an external divider --
+ * the standard nRF52 "read VDD via SAADC" configuration (see
+ * src/battery.h's header comment for the full derivation
+ * battery_raw_to_millivolts() relies on).
+ *
+ * &adc defaults to status = "disabled" in the SoC devicetree
+ * (zephyr/dts/arm/nordic/nrf52832.dtsi) -- must be explicitly re-enabled
+ * here.
+ */
+&adc {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+		zephyr,input-positive = <NRF_SAADC_VDD>;
+		zephyr,resolution = <12>;
 	};
 };

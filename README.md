@@ -247,13 +247,13 @@ tickless-kernel baseline is judged sufficient.
 
 Out of scope here (later UWB-13 subissues, see ADR-0046 "New work
 created"): DW1000 sleep/wake (UWB-316), the STANDBY power-state machine
-(UWB-319), battery voltage monitoring (UWB-322). BLE-advertising
-duty-cycle policy (UWB-320) is **done** — see "BLE advertising duty-cycle
-policy (UWB-320)" under "MCUboot & OTA" below. None of the other
-ACTIVE/STANDBY/OFF behaviour above is wired into a running mode yet —
-`src/main.c` is still BLE/SMP + idle plus a fixed boot-time power state
-(see "MCUboot & OTA" below); UWB-314 (this section) only lands the profile
-switch and PM baseline those subissues build on.
+(UWB-319). BLE-advertising duty-cycle policy (UWB-320) and battery voltage
+monitoring (UWB-322) are **done** — see "BLE advertising duty-cycle policy
+(UWB-320)" and "Battery voltage monitor (UWB-322)" under "MCUboot & OTA"
+below. None of the other ACTIVE/STANDBY/OFF behaviour above is wired into a
+running mode yet — `src/main.c` is still BLE/SMP + idle plus a fixed
+boot-time power state (see "MCUboot & OTA" below); UWB-314 (this section)
+only lands the profile switch and PM baseline those subissues build on.
 
 CI builds both profiles on every push/PR (`.github/workflows/build.yml`,
 jobs `west-build` and `west-build-low-power`).
@@ -404,6 +404,73 @@ hardware; verifying the low-power-profile suppression end-to-end currently
 means manually driving `ble_adv_policy_set_state()`, e.g. from a debug
 build, until UWB-319 lands).
 
+### Battery voltage monitor (UWB-322, ADR-0046 point 5)
+
+ADR-0046 point 5 makes battery monitoring a **local seam for v1**: read
+nRF52 SAADC VDD (against the internal 0.6 V reference) on a low-rate timer
+and surface it over the existing MCUmgr `os_mgmt` channel (or a log line) —
+**not** over the UWB blink payload, which would need a `contracts/uwb`
+MINOR bump plus solver/DynamoDB schema changes across three repos
+(explicitly deferred to "fork B", see the ADR's "Open"/"Alternatives
+considered" sections). `contracts/uwb` is untouched by this ticket.
+
+Enabled by `CONFIG_UWB_BATTERY_MONITOR` (default `n`, set to `y` in
+`prj.conf` for both the bench and low-power profiles — this feature is
+independent of `CONFIG_UWB_TAG_LOW_POWER`):
+
+- **`src/battery.h` / `battery.c` (pure, host-testable):**
+  `battery_raw_to_millivolts()` converts a raw SAADC count to millivolts
+  assuming the fixed gain (1/6) + internal reference (0.6 V) + resolution
+  (12-bit) configuration the board devicetree wires up (full-scale range
+  0.6 V x 6 = 3.6 V — the standard nRF52 "read VDD via SAADC"
+  configuration, comfortably spanning a single-cell Li-based tag battery's
+  ~1.8–3.6 V range with no external divider).
+  `battery_millivolts_to_percent()` is a coarse piecewise-linear
+  approximation of a single-cell Li-based discharge curve (3000 mV → 0%,
+  3400 → 20%, 3700 → 50%, 3900 → 80%, 4200 mV → 100%) — **not** a
+  calibrated fuel-gauge curve. No Zephyr includes; unit-tested in
+  `tests/battery` (ztest/`unit_testing`).
+- **`src/battery_zephyr.c` (Zephyr/hardware-only):** reads the
+  `zephyr,user` devicetree ADC channel (`boards/nrf52dk_nrf52832.overlay`,
+  `NRF_SAADC_VDD` input) via the Zephyr ADC devicetree API
+  (`adc_channel_setup_dt()` / `adc_read_dt()`), on a
+  `k_work_delayable` re-armed every `CONFIG_UWB_BATTERY_SAMPLE_INTERVAL_S`
+  seconds (default 300 s / 5 minutes — a low-rate timer, deliberately NOT
+  per tracking cycle, per ADR-0046 point 5), and stores the latest
+  (millivolts, percent) reading behind a mutex. Every sample is also
+  `LOG_INF()`'d.
+- **`os_mgmt` surfacing:** when `CONFIG_MCUMGR_GRP_OS_INFO_CUSTOM_HOOKS` is
+  enabled (set in `prj.conf`), `battery_zephyr.c` registers a **custom
+  `os_mgmt info` format specifier** (`'e'`, "energy") using Zephyr's
+  documented `os_mgmt` extension hooks
+  (`MGMT_EVT_OP_OS_MGMT_INFO_CHECK`/`_APPEND`,
+  `zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt.h`) — this is the "custom stat/
+  echo group entry" this ticket's acceptance criteria describe, not a
+  hand-rolled new MCUmgr group. Query with the `mcumgr` CLI:
+  `mcumgr -c <conn> os info -f e` (or `-f a` for all fields) — the response
+  appends `battery=<mV>mV,<pct>%` (or `battery=unknown` before the first
+  sample completes).
+
+`src/main.c` calls `battery_monitor_init()` early in `main()` (before BLE
+bring-up, same as the UWB-266 self-check gate); a non-zero return is logged
+but does not block boot (the tag still needs to track/advertise even if the
+battery ADC channel is unavailable for some reason).
+
+**Host-tested:** `tests/battery` (ztest/`unit_testing`) exercises the
+conversion helpers' boundary/clamp behaviour, the documented breakpoints,
+interpolation between breakpoints, and monotonicity across the full input
+range. `battery_zephyr.c`'s actual SAADC read + `os_mgmt` wiring is
+Zephyr-hardware-only and is **not** unit tested (the `unit_testing`
+platform has no ADC driver or MCUmgr subsystem) — it needs on-device
+verification.
+
+**On-hardware bring-up note (not verified by CI or this ticket):** confirm
+the reported millivolt value tracks a bench power supply sweep (e.g. step
+the supply from 3.0 V to 3.6 V in 100 mV increments and check
+`os info -f e` / the log line moves accordingly) before relying on this
+module's readings for anything beyond a rough sanity check. No physical
+board was available to exercise this as part of implementing this ticket.
+
 ### Image self-confirm, health gate & version reporting (UWB-266)
 
 `src/main.c` calls `confirm_image_if_healthy()` early in `main()` (before BLE
@@ -514,12 +581,16 @@ uwb_tag_firmware/
 │   ├── image_health_zephyr.c   # Zephyr-side check gathering (UWB-266)
 │   ├── ble_adv_policy.h        # BLE adv duty-cycle policy types + API (UWB-320)
 │   ├── ble_adv_policy.c        # pure should-advertise() decision (host-testable, UWB-320)
-│   └── ble_adv_policy_zephyr.c # Zephyr-side adv start/stop + connect/disconnect wiring (UWB-320)
+│   ├── ble_adv_policy_zephyr.c # Zephyr-side adv start/stop + connect/disconnect wiring (UWB-320)
+│   ├── battery.h               # battery monitor types + conversion API (UWB-322)
+│   ├── battery.c               # pure raw-counts -> mV/percent conversion (host-testable, UWB-322)
+│   └── battery_zephyr.c        # Zephyr-side SAADC read + timer + os_mgmt/log wiring (UWB-322)
 ├── tests/
 │   ├── image_health/           # ztest host suite for image_health_evaluate() (UWB-266)
-│   └── ble_adv_policy/         # ztest host suite for ble_adv_policy_should_advertise() (UWB-320)
+│   ├── ble_adv_policy/         # ztest host suite for ble_adv_policy_should_advertise() (UWB-320)
+│   └── battery/                # ztest host suite for the battery conversion helpers (UWB-322)
 ├── boards/
-│   └── nrf52dk_nrf52832.overlay  # DWM1001 SPI1/GPIO pin mapping for DW1000
+│   └── nrf52dk_nrf52832.overlay  # DWM1001 SPI1/GPIO pin mapping for DW1000 + battery SAADC channel (UWB-322)
 ├── docs/
 │   └── ota.md                   # flash + BLE-DFU procedure, bring-up checklist (UWB-267)
 └── README.md                   # this file
@@ -545,11 +616,13 @@ Upcoming additions (later subissues):
 - Low-power tag build profile + Zephyr PM baseline (ADR-0046, UWB-314) —
   **done**, see "Power-management profile (ADR-0046)" above. DW1000
   sleep/wake (UWB-316) and the STANDBY state machine (UWB-319) are separate,
-  not-yet-implemented follow-ons; battery monitoring (UWB-322) likewise.
+  not-yet-implemented follow-ons.
 - BLE advertising duty-cycle policy (ADR-0046 point 4, UWB-320) — **done**,
   see "BLE advertising duty-cycle policy (UWB-320, ADR-0046 point 4)" above.
   Wires against a caller-supplied power-state signal (boot-time default
   today); the STANDBY state machine that would drive it live is UWB-319.
+- Battery voltage monitor (ADR-0046 point 5, UWB-322) — **done**, see
+  "Battery voltage monitor (UWB-322, ADR-0046 point 5)" above.
 - CI signed-update artifact + host DFU/bring-up procedure docs (ADR-0040,
   UWB-267) — **done**, see "MCUboot & OTA" above and `docs/ota.md`. This
   closes out the ADR-0040 OTA epic.
