@@ -76,7 +76,14 @@ struct mock_dwt_otp_state {
     uint32 antdly_word;
 };
 
-/** State captured from mock dwt_configuresleep() / dwt_entersleep() (UWB-316). */
+/** State captured from mock dwt_configuresleep() / dwt_entersleep() (UWB-316).
+ *
+ * configuresleep_called / entersleep_called are CALL COUNTS here (not the
+ * 0/1 flags tests/dw1000_sleep's own mock uses) -- uwb_standby_step() drives
+ * dw1000_sleep() repeatedly across a single test (STANDBY entry, then a
+ * re-sleep per absent-presence or failed-wake outcome), so tests need to
+ * assert exactly how many sleep cycles happened, not just whether at least
+ * one did. *_seq is stamped from the LAST call in each case. */
 struct mock_dwt_sleep_state {
     int    configuresleep_called;
     uint16 configuresleep_mode;

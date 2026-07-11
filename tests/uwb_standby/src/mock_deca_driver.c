@@ -143,7 +143,12 @@ void dwt_otpread(uint32 address, uint32 *array, uint8 length)
  * --------------------------------------------------------------------------- */
 void dwt_configuresleep(uint16 mode, uint8 wake)
 {
-    mock_sleep_state.configuresleep_called = 1;
+    /* Unlike tests/dw1000_sleep's own mock (a single sleep/wake round trip
+     * per test, so a 0/1 "called" flag suffices), uwb_standby_step() drives
+     * dw1000_sleep() repeatedly across one test (entry, then a re-sleep per
+     * absent/failed wake) -- these are counters, not flags, so tests can
+     * assert exactly how many sleep/wake cycles happened. */
+    mock_sleep_state.configuresleep_called++;
     mock_sleep_state.configuresleep_mode   = mode;
     mock_sleep_state.configuresleep_wake   = wake;
     mock_sleep_state.configuresleep_seq    = mock_seq_next();
@@ -151,7 +156,7 @@ void dwt_configuresleep(uint16 mode, uint8 wake)
 
 void dwt_entersleep(void)
 {
-    mock_sleep_state.entersleep_called = 1;
+    mock_sleep_state.entersleep_called++;
     mock_sleep_state.entersleep_seq    = mock_seq_next();
 }
 
