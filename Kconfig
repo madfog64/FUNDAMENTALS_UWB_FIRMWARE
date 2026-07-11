@@ -63,3 +63,57 @@ config UWB_TAG_LOW_POWER
 	  does not implement the STANDBY state machine, DW1000 sleep/wake, BLE
 	  advertising duty-cycling, or battery monitoring — those are separate
 	  UWB-13 subissues (UWB-316/319/320/322) that build on this seam.
+
+# ---------------------------------------------------------------------------
+# Battery voltage monitor (ADR-0046 point 5, UWB-322)
+#
+# A local seam only: reads nRF52 SAADC VDD (against the internal reference)
+# on a low-rate timer and surfaces the result over MCUmgr os_mgmt (a custom
+# "info" format specifier, see src/battery_zephyr.c) and a periodic log
+# line. Reporting battery to the cloud would ride the UWB blink payload,
+# which needs a contracts/uwb MINOR bump plus solver/schema changes across
+# three repos — deferred to "fork B" per ADR-0046's "Open" section; out of
+# scope here. This symbol is independent of CONFIG_UWB_TAG_LOW_POWER: it is
+# useful in both the bench and low-power profiles.
+# ---------------------------------------------------------------------------
+
+config UWB_BATTERY_MONITOR
+	bool "Battery voltage monitor (SAADC VDD, ADR-0046 point 5)"
+	select ADC
+	default n
+	help
+	  Enables src/battery.c's pure raw-ADC-counts -> millivolts/percentage
+	  conversion (host-testable, tests/battery) and src/battery_zephyr.c's
+	  SAADC read + low-rate sample loop (CONFIG_UWB_BATTERY_SAMPLE_INTERVAL_S)
+	  + os_mgmt/log surfacing.
+
+	  Requires the board devicetree to wire an ADC channel reading
+	  NRF_SAADC_VDD (see boards/nrf52dk_nrf52832.overlay's "zephyr,user"
+	  node) — battery_zephyr.c fails a devicetree #error at build time if
+	  that channel is missing.
+
+	  Out of scope: reporting battery via the UWB blink payload (deferred,
+	  ADR-0046 fork B) and low-battery shutdown behaviour (a later
+	  ticket).
+
+if UWB_BATTERY_MONITOR
+
+config UWB_BATTERY_SAMPLE_INTERVAL_S
+	int "Battery SAADC sample interval (seconds)"
+	default 300
+	range 1 86400
+	help
+	  How often battery_zephyr.c re-arms its delayable work item to take a
+	  fresh SAADC VDD sample. ADR-0046 point 5 is explicit that this must
+	  be a low-rate timer (seconds-minutes), not per tracking cycle — a
+	  battery rail changes on a timescale of minutes at the fastest
+	  (discharge under load), so there is no accuracy benefit to sampling
+	  faster, only wasted SAADC/CPU wake-ups.
+
+	  Default 300 s (5 minutes): frequent enough to catch a meaningfully
+	  changing reading during a multi-hour session, infrequent enough to
+	  be a negligible contributor to the tag's overall power budget. Not
+	  yet empirically tuned against real battery hardware (ADR-0046 point
+	  6, "empirical constants are provisioned, not decided here").
+
+endif # UWB_BATTERY_MONITOR
