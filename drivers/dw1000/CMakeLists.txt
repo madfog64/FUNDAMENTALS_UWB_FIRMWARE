@@ -51,6 +51,7 @@ if(CONFIG_DW1000)
     uwb_tracking.c             # Tag-side per-cycle TDoA tracking loop (UWB-252)
     uwb_join.c                 # Tag-side Aloha join state machine (UWB-261)
     uwb_join_track.c           # Join -> tracking orchestration seam (UWB-263)
+    uwb_standby.c              # STANDBY power-state machine (UWB-319)
   )
 
   # Include paths for compilation units inside this library.

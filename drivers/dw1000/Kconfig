@@ -445,4 +445,32 @@ config UWB_SYNC_MAX_MISSED
 	  timing (UWB-9) and channel conditions are measured; not yet
 	  calibrated against on-air data.
 
+# ---------------------------------------------------------------------------
+# STANDBY power state -- consumed by drivers/dw1000/uwb_standby.c (UWB-319)
+#
+# Per ADR-0046 ("Tag power-management profile & low-power state model")
+# Decision point 3: when there is no active session (or SYNC has been lost
+# past CONFIG_UWB_SYNC_MAX_MISSED above -- reused, not duplicated, as the
+# STANDBY entry threshold), the tag deep-sleeps the DW1000 (UWB-316's
+# dw1000_sleep()/dw1000_wake() seam) and wakes on this cadence to check for a
+# live network. See uwb_standby.h for the full seam contract.
+# ---------------------------------------------------------------------------
+
+config UWB_STANDBY_WAKE_CADENCE_MS
+	int "STANDBY wake cadence: milliseconds between DW1000 network-presence checks"
+	default 10000
+	range 1 3600000
+	help
+	  While the tag is in STANDBY (uwb_standby.c, UWB_STANDBY_PHASE_ASLEEP),
+	  this is how long the DW1000 stays in DEEPSLEEP between each brief wake
+	  + one-SYNC-listen network-presence check (uwb_standby_step()).
+
+	  Default 10,000 ms (10 s): a placeholder trading STANDBY current
+	  (longer cadence = lower average current) against how quickly the tag
+	  notices a session has (re)started and rejoins (longer cadence = more
+	  latency before the tag hears the first SYNC and can (re)join). Not yet
+	  empirically tuned against real DW1000 DEEPSLEEP/wake current or a
+	  target field battery life (ADR-0046 point 6 / "Open" point A) -- tune
+	  on hardware once both are measured.
+
 endif # DW1000
